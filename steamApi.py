@@ -1,18 +1,15 @@
-#import ctypes
+from sys import platform
 from cffi import FFI
 from pathlib import Path
 from json import loads
 from re import compile as regex
+from enum import IntEnum
 
 api = loads(Path('../public/steam/steam_api.json').read_text())
 
 ffi_builder = FFI()
 
-# these strings that are too long, patch pending
-# see https://github.com/python-cffi/cffi/pull/167
-bannedEnums = {'EControllerActionOrigin', 'EInputActionOrigin'}
-
-# to determine whether to forward declared types
+# to determine whether to forward declare types
 # ik const, unsigned and * are not actually types but this simplifies things
 known_types = {'const', 'unsigned', '*', 'void', 'char', 'long', 'int' }
 
@@ -23,23 +20,50 @@ def declare_type(name:str, declaration:str)->None:
 	#print(declaration)
 	ffi_builder.cdef(declaration)
 
+
+# Enums ---------------------------------
+# NOTE: we already create the classes that contain the enums
+
 for enum in api['enums']:
 	enumname = enum['enumname']
-	if enumname in bannedEnums: continue
-	declare_type(enumname,
-		f'enum {enumname} {{'
-		+ ', '.join( (f"{value['name']} = {value['value']}" for value in enum['values']) )
-		+ f'}} {enumname}'
-	)
 
-detect_array = regex('(\\w+)\\s*(\\[[0-9]+\\])')
+	values = ( (d['name'], int(d['value'])) for d in enum['values'] )
+
+	# typedef as int and enum values as constants
+	declare_type(enumname, f'int {enumname}')
+	for name, value in values:
+		ffi_builder.cdef(f'const {enumname} {name} = {value};')
+
+	# create a class with the values and names
+	# TODO: check that steam api accepts those
+	cls = IntEnum(
+		enumname,
+		{ name.replace(enumname+'_', ''):value for name, value in values },
+		module=__name__
+	)
+	globals()[enumname] = cls
+	#print(cls)
+
+	# old declaration as c enum, generate strings that are too long
+	# see https://github.com/python-cffi/cffi/pull/167
+	#declare_type(enumname,
+	#	f'enum {enumname} {{'
+	#	+ ', '.join( (f"{value['name']} = {value['value']}" for value in enum['values']) )
+	#	+ f'}} {enumname}'
+	#)
+
+
+# typedefs ---------------------------------
+# NOTE: requires some forward declarations
+
+array_regex = regex('(\\w+)\\s*(\\[[0-9]+\\])')
 for typedef in api['typedefs']:
 	typename = typedef['typedef']
 	actualtype = typedef['type']
 
 	# fixed array
 	if '[' in actualtype:
-		actualtype, sizebracketed = detect_array.match(actualtype).groups()
+		actualtype, sizebracketed = array_regex.match(actualtype).groups()
 		declare_type(typename, f'{actualtype} {typename}{sizebracketed}')
 		continue
 
@@ -52,7 +76,6 @@ for typedef in api['typedefs']:
 		for param in params:
 			for t in param.strip().split(' '):
 				if not t in known_types:
-					#print('forward declare of', t)
 					declare_type(t, f'struct {t} {t}')
 
 		# callback must be dclared after its params
@@ -70,46 +93,58 @@ ESteamAPIInitResult SteamAPI_InitFlat(SteamErrMsg *pOutErrMsg);
 void SteamAPI_Shutdown(void);
 """)
 
-
-ffi_builder.set_source(
-	'steamworks_cffi',
-	# need to go up 2 dirs since 'build' is a subdir
-	"""
-	#include "../../public/steam/steam_api_flat.h"
-	#include "../../public/steam/steam_gameserver.h" // for EServerMode enum
-	""",
-	include_dirs=[
-		'../../public',
-	],
-	library_dirs=[
-		'../../redistributable_bin/win64',
-	],
-	libraries=[
-		'steam_api64',
-	],
-    source_extension='.cpp',
-)
-
-
-# now works with dynamic ffi and compiled
-# TODO: use dynamic as fallback 
+# some renaming to match steam dir names
+# TODO: test other pltforms
+platform = { 'win32':'win64', 'linux':'linux64', 'darwin':'osx' }[platform]
+lib_name = { 'win64':'steam_api64.dll', 'linux64':'libsteam_api.so', 'osx':'libsteam_api.dylib' }[platform]
 
 if __name__ == "__main__":
+
+	# create build dir if it does not exist
+	if not (b_dir := Path('build')).exists() or not b_dir.is_dir():
+		b_dir.mkdir()
+	
+	# copy dll in build folder
+	destination = Path(f'./build/{lib_name}')
+	origin = Path(f'../redistributable_bin/{platform}/{lib_name}')
+	if not destination.exists():
+		origin.copy(destination)
+
+
+	ffi_builder.set_source(
+		'steamworks_cffi',
+		# need to go up 2 dirs since 'build' is a subdir
+		"""
+		#include "../../public/steam/steam_api_flat.h"
+		#include "../../public/steam/steam_gameserver.h" // for EServerMode enum
+		""",
+		include_dirs=[
+			'../../public',
+		],
+		library_dirs=[
+			f'../../redistributable_bin/{platform}',
+		],
+		libraries=[
+			destination.stem,
+		],
+	    source_extension='.cpp',
+	)
 	ffi_builder.compile(tmpdir='build',)#verbose=True)
-	#steam = ffi_builder.dlopen(str(Path("../redistributable_bin/win64/steam_api64.dll").resolve()))
 
-	# TODO: copy steam_api64.dll|.so into build dir
+# import the compiled module
+try:
+	from build.steamworks_cffi import ffi, lib
+except Exception as ex:
+	print(f'import compiled module failed ({ex}), fallback to dynamic')
+	ffi = ffi_builder
+	lib = ffi.dlopen(str(Path("./build/steam_api{lib_ext}").resolve()))
 
-	from build.steamworks_cffi import ffi, lib as steam
+#from pprint import pp
+#pp(dir(lib))
 
-	#from pprint import pp
-	#pp(dir(steam))
+err = ffi.new("SteamErrMsg *")
+result = lib.SteamAPI_InitFlat(err)
+#print(result)
+#print(ffi.string(err[0]).decode("utf-8", errors="replace"))
 
-	#err = ffi_builder.new("SteamErrMsg *")
-	err = ffi.new("SteamErrMsg *")
-	result = steam.SteamAPI_InitFlat(err)
-
-	#print(result)
-	#print(ffi.string(err[0]).decode("utf-8", errors="replace"))
-
-	steam.SteamAPI_Shutdown()
+lib.SteamAPI_Shutdown()
