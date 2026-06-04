@@ -1,6 +1,7 @@
 from sys import platform
 from cffi import FFI
 from pathlib import Path
+from shutil import copy2 as copy_file
 from json import loads
 from re import compile as regex
 from enum import IntEnum
@@ -8,8 +9,8 @@ from enum import IntEnum
 
 # some renaming to match steam dir names
 # TODO: test other pltforms
-platform = { 'win32':'win64', 'linux':'linux64', 'darwin':'osx' }[platform]
-lib_name = { 'win64':'steam_api64.dll', 'linux64':'libsteam_api.so', 'osx':'libsteam_api.dylib' }[platform]
+platform = { 'win32':'win64', 'linux':'linux64', 'android':'androidarm64', 'darwin':'osx' }[platform]
+lib_name = { 'win64':'steam_api64.dll', 'linux64':'libsteam_api.so', 'androidarm64': 'libsteam_api.so', 'osx':'libsteam_api.dylib' }[platform]
 
 api_json = loads(Path('../public/steam/steam_api.json').read_text())
 
@@ -177,7 +178,7 @@ if __name__ == "__main__":
 	destination = Path(f'./build/{lib_name}')
 	origin = Path(f'../redistributable_bin/{platform}/{lib_name}')
 	if not destination.exists():
-		origin.copy(destination)
+		copy_file(origin, destination)
 
 
 	ffi_builder.set_source(
