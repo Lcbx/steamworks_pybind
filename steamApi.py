@@ -16,60 +16,39 @@ api_json = loads(Path('../public/steam/steam_api.json').read_text())
 
 ffi_builder = FFI()
 
+cpp_source =  """
+#include "../../public/steam/steam_api_flat.h"
+#include "../../public/steam/steam_gameserver.h" // for EServerMode enum
+"""
+
 # to determine whether to forward declare types
 # ik const, unsigned and * are not actually types but this simplifies things
-known_types = {'const', 'unsigned', 'signed', '*', '**', 'void', 'char', 'short', 'long', 'int', 'float' }
+known_types = {'const', 'unsigned', 'signed', '*', '**', 'void', 'char', 'short', 'long', 'int', 'float', 'double' }
+
+# types that have been properly defined
+# for structs, that means full declaration, with struct members
+defined_types = set() #{ t for t in known_types }
 
 def typedef(name:str, declaration:str)->None:
-	add_type(name)
+	global known_types
+	known_types.add(name)
 	declaration = f'typedef {declaration};\n'
 	#print(declaration)
 	ffi_builder.cdef(declaration)
 
-def add_type(name:str)->None:
-	global known_types
-	known_types.add(name)
+def extern(name:str, declaration:str)->None:
+	global defined_types
+	defined_types.add(name)
+	declaration = f'extern {declaration};\n'
+	#declaration = f'{declaration};\n'
+	#print(declaration)
+	ffi_builder.cdef(declaration)
 
+def add_global(name:str, clss:object)->None:
+	globals()[name] = cls
 
-## Enums ---------------------------------
-# NOTE: we already create the classes that contain the enums
-
-for enum in api_json['enums']:
-	enumname = enum['enumname']
-
-	values = ( (d['name'], int(d['value'])) for d in enum['values'] )
-
-	# typedef as int and enum values as constants
-	typedef(enumname, f'int {enumname}')
-	for name, value in values:
-		ffi_builder.cdef(f'const {enumname} {name} = {value};')
-
-	# create a class with the values and names
-	# TODO: check that steam api accepts those
-	cls = IntEnum(
-		enumname,
-		{ name.replace(enumname+'_', ''):value for name, value in values },
-		module=__name__
-	)
-	globals()[enumname] = cls
-	#print(cls)
-
-	# old declaration as c enum, generate strings that are too long
-	# see https://github.com/python-cffi/cffi/pull/167
-	#typedef(enumname,
-	#	f'enum {enumname} {{'
-	#	+ ', '.join( (f"{value['name']} = {value['value']}" for value in enum['values']) )
-	#	+ f'}} {enumname}'
-	#)
-
-
-## typedefs ---------------------------------
-# NOTE: requires some forward declarations
-
-array_regex = regex('(\\w+)\\s*(\\[[0-9]+\\])')
 
 def parse_type(name, typename:str)->tuple:
-
 	# functions / callbacks
 	if '(*)' in typename:
 		params = typename.split('(*)')[-1][1:-1].split(',')
@@ -98,29 +77,76 @@ def parse_type(name, typename:str)->tuple:
 	return name, typename, sizebracketed
 
 
+## Enums ---------------------------------
+# NOTE: we already create the classes that contain the enums
+
+# NOTE: some interfaces also define enums
+# TODO?: use fqname to add to relevant interface (ex: "fqname": "ISteamHTMLSurface::EHTMLMouseButton")
+
+def define_enum(enum_json:dict, interface:dict|None=None)->None:
+	
+	enumname = enum['enumname']
+	values = ( (d['name'], int(d['value'])) for d in enum_json['values'] )
+
+	# typedef as int and enum values as constants
+	typedef(enumname, f'int {enumname}')
+	for name, value in values:
+		ffi_builder.cdef(f'const {enumname} {name} = {value};')
+
+	# create a class with the values and names
+	# TODO: check that steam api accepts those
+	cls = IntEnum(
+		enumname,
+		{ name.replace(enumname+'_', ''):value for name, value in values },
+		module=__name__
+	)
+	#print(cls)
+	
+	# add to globals if not part of interface
+	#defined_types.add(enumname)
+	(interface if interface else globals())[enumname] = cls
+
+
+for enum in api_json['enums']:
+	define_enum(enum)
+
+
+## typedefs ---------------------------------
+# NOTE: requires some forward declarations
+
+array_regex = regex('(\\w+)\\s*(\\[[0-9]+\\])')
+
 for td in api_json['typedefs']:
 	typename = td['typedef']
 	typename, actualtype, sizebracketed = parse_type(typename, td['type'])
 	#print(typename, actualtype, sizebracketed)
 	typedef(typename, f'{actualtype} {typename}{sizebracketed}')
 
-# missing typedefs (really valve, really ?)
-typedef('CSteamID', 'uint64 CSteamID')
-typedef('CGameID',  'uint64 CGameID')
+
+# c is silly
+typedef('bool',    'int bool')
+typedef('int64_t', 'int64 int64_t')
+
+# NOTE : need to write shims for conversion to and from uint64
+# for structs and functions....
+#typedef('CSteamID', 'uint64 CSteamID')
+#typedef('CGameID',  'uint64 CGameID')
+# has union members
+defined_types.add('SteamInputActionEvent_t')
 
 
 ## structs ---------------------------------
-# TODO: when encountering an unknow type in struct fields, try to find it in api.json 
 # TODO: create wrapper python classes using type()
-ignore = {} #{'SteamInputActionEvent_t', 'SteamDatagramGameCoordinatorServerLogin', 'SteamDatagramHostedAddress'}
-for st in api_json['structs']:
-	structname = st['struct']
-	if structname in ignore: continue
-	
-	# forward declaration
-	typedef(structname, f'struct {structname} {structname}')
+# NOTE: not sure what to do with callback_structs' callback_id
 
-	fields = [ (
+def define_struct(struct_json:dict):
+	structname = st['struct']
+	if structname in defined_types: return
+	
+	# forward declaration for structs thatuse references to themselves
+	#typedef(structname, f'struct {structname} {structname}')
+
+	fields = [ ( # public, name, actualtype, sizebracketed
 		f.get('private') == None, *parse_type(f['fieldname'], f['fieldtype'])
 		) for f in st['fields']
 	]
@@ -128,37 +154,35 @@ for st in api_json['structs']:
 
 	partial = any(map(lambda _public: not _public[0], fields))
 
-	declaration = f"""
-struct {structname} {{{ ''.join((
+	declaration = f"""struct {structname} {{{ ''.join((
 	f'\n\t{actualtype} {name}{sizebracketed};'
 	for public, name, actualtype, sizebracketed in fields if public
 	))
-}{ "\n\t...; // allow partial declarations" if partial else ''}
-}} {structname};"""
-	print(declaration)
-	#print(known_types)
-	typedef(structname, declaration)
+}{ '\n\t...; // allow partial declarations' if partial else ''}
+}}"""
 
+	extern(structname,  declaration)
 
-#ffi_builder.cdef("""
-#struct SteamInputActionEvent_t
+if False:
+	for st in api_json['callback_structs'] + api_json['structs']:
+		define_struct(st)
+
+# NOTE: some structs have unions
+# it seems the json only takes the first set of properties
+# ex: here the struct declared only has a AnalogAction_t field
+#extern('DigitalAction_t', """struct DigitalAction_t {
+#	InputDigitalActionHandle_t actionHandle;
+#	InputDigitalActionData_t digitalActionData;
+#}""")
+#extern('SteamInputActionEvent_t', """struct SteamInputActionEvent_t
 #{
 #	InputHandle_t controllerHandle;
 #	ESteamInputActionEventType eEventType;
-#	struct AnalogAction_t {
-#		InputAnalogActionHandle_t actionHandle;
-#		InputAnalogActionData_t analogActionData;
-#	};
-#	struct DigitalAction_t {
-#		InputDigitalActionHandle_t actionHandle;
-#		InputDigitalActionData_t digitalActionData;
-#	};
-#	union {
+#	//union {
 #		AnalogAction_t analogAction;
-#		DigitalAction_t digitalAction;
-#	};
-#};
-#""")
+#	//	DigitalAction_t digitalAction;
+#	//};
+#}""")
 
 
 ffi_builder.cdef(
@@ -168,6 +192,7 @@ void SteamAPI_Shutdown(void);
 """)
 
 
+#if False:
 if __name__ == "__main__":
 
 	# create build dir if it does not exist
@@ -183,12 +208,8 @@ if __name__ == "__main__":
 
 	ffi_builder.set_source(
 		'steamworks_cffi',
-		# need to go up 2 dirs since 'build' is a subdir
-		"""
-		#include "../../public/steam/steam_api_flat.h"
-		#include "../../public/steam/steam_gameserver.h" // for EServerMode enum
-		//#include "../../public/steam/matchmakingtypes.h" // for servernetadr_t
-		""",
+		cpp_source,
+		# need to go up 2 dirs since 'build' is a subdir,
 		include_dirs=[
 			'../../public',
 		],
@@ -212,6 +233,8 @@ except Exception as ex:
 
 #from pprint import pp
 #pp(dir(lib))
+#pp(globals()['ESteamIPType'])
+#pp(dir(ESteamIPType))
 
 err = ffi.new("SteamErrMsg *")
 result = lib.SteamAPI_InitFlat(err)
