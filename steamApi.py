@@ -221,7 +221,7 @@ else:
 	for cls in classes:
 		define_class(cls)
 		#if cls['struct'] == 'SteamNetworkingMessage_t': break
-for tp,sz in arraybinds:
+for tp,sz in sorted(arraybinds): # sorted is to have deterministic order
 	binds += f'bind_fixed_array_view<{tp}, {sz}>(m, "{tp}array{sz}");'
 
 
