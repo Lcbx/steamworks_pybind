@@ -18,4 +18,12 @@ print(ffl.rgSteamID)
 assert(int(ffl.rgSteamID[1]) == 43)
 assert(int(ffl.rgSteamID.to_list()[1]) == 43)
 
+ip1 = steam.SteamNetworkingIPAddr()
+ip1.port = 1221
+ip2 = steam.SteamNetworkingIPAddr()
+ip2.port = 1221
+assert(ip1 == ip2)
+ip2.port = 45
+assert(ip1 != ip2)
+
 steam.shutdown()

@@ -8,6 +8,9 @@ class BindingsFile:
 	def __init__(self):
 		fpath = Path('bindings.cpp')
 		self.f = open(fpath, 'r+')
+		#print('bindings file open')
+
+	def reset(self):
 		p = 0
 		SEPERATOR = '/* __PROCEDURALY_GENERATED__ */'
 		while line := self.f.readline():
@@ -15,24 +18,68 @@ class BindingsFile:
 			p = self.f.tell() + len(SEPERATOR)+1
 		self.f.truncate(p)
 		self.f.seek(p)
-		#print('bindings file open')
 
 	def __iadd__(self, s:str)->BindingsFile:
 		self.f.write(f' \t{s}\n')
 		return self
 
 	def __del__(self):
-		#print('bindings file released')=
+		#print('bindings file released')
 		self.__iadd__('\n}') # close module
 		self.f.close()
 
 binds = BindingsFile()
+binds.reset()
 binds += '\n'
 
 
 api_json = loads(Path('../public/steam/steam_api.json').read_text())
 struct_json = api_json['callback_structs'] + api_json['structs']
 
+policies = {
+
+	'SteamNetworkingConfigValue_t' : {
+	# SteamNetworkingConfigValue_t union member is weird, renaming it fixes compile error
+		'm_int64': 'm_val',
+	},
+
+	# SteamNetworkingMessage_t has no dextructor, expects you to call release
+	# use this type as a proxy for python
+	'SteamNetworkingMessage_t' : { 'py_type' : 'ReleasePtr<SteamNetworkingMessage_t>', },
+
+	# SteamParamStringArray is only struct with const char **
+	# we have a custom type_caster for it
+	'const char **' : 'py_skip',
+
+	# we have another way to bind relase/free
+	'void (*m_pfnFreeData)(SteamNetworkingMessage_t *)' : 'py_skip',
+	'void (*m_pfnRelease)(SteamNetworkingMessage_t *)'  : 'py_skip',
+	
+	'method_renames' : {
+		#'ToString'   : '__str__', # not 1 to 1
+		'operator=='  : '__eq__',
+		'operator!='  : '__ne__',
+		'operator<'   : '__lt__',
+		'operator>'   : '__gt__',
+		'operator<='  : '__le__',
+		'operator>='  : '__ge__',
+		'operator+'   : '__add__',
+		'operator-'   : '__sub__',
+		'operator*'   : '__mul__',
+		'operator/'   : '__truediv__',
+		'operator%'   : '__mod__',
+		'operator+='  : '__iadd__',
+		'operator-='  : '__isub__',
+		'operator*='  : '__imul__',
+		'operator/='  : '__itruediv__',
+		'operator%='  : '__imod__',
+		#'operator//' : '__floordiv__',	 # not a C++ operator
+		#'operator//= : '__ifloordiv__', # not a C++ operator
+		#'operator**' : '__pow__',		 # not a C++ operator
+		#'operator**= : '__ipow__',		 # not a C++ operator
+	},
+}
+method_renames = policies['method_renames']
 
 # to determine whether to forward declare types
 # ik const, unsigned and * are not actually types but this simplifies things
@@ -83,27 +130,36 @@ def parse_type(name, typename:str)->tuple:
 def define_class(class_json:dict):
 	global binds
 	class_ = class_json['struct']
-	simple_class_ = class_[:-2] if class_.endswith('_t') else class_
+	class_policy = policies.get(class_) or {}
+
+	py_class = class_[:-2] if class_.endswith('_t') else class_
 	bName = f'_{class_.lower()}_'
 
-	methods = {m['methodname']:m for m in mtds} if (mtds := class_json.get('methods')) else {}
-
-	no_constructor = 'Release' in methods
-	addendum = f', std::unique_ptr<{class_}, py::nodelete>' if no_constructor else ''
+	py_type = class_policy.get('py_type')
 	
-	binds += f'py::class_<{class_}{addendum}> {bName}(m, "{simple_class_}");'
+	binds += f'py::class_<{class_}{f", {py_type}" if py_type else ""}> {bName}(m, "{py_class}");'
 	binds += bName
 
-	if not no_constructor:
+	methods = {m['methodname']:m for m in mtds} if (mtds := class_json.get('methods')) else {}
+	has_constructor = not 'Release' in methods
+
+	if has_constructor:
 		binds += f'\t.def(py::init<>())'
 
-	# TODO: take all method definitions into account
-	for mName, value in methods.items():
-		if mName == 'Construct': pass # already defined above 
-		elif not value['params'] :
-			if (nFlat := value['methodname_flat']):
-				binds +=  f'\t.def("{mName}", &{nFlat})'
-			else: binds += f'\t.def("{mName}", &{class_}::{mName})'
+	# TODO: make this machinery common with interfaces
+	for mName, method_json in methods.items():
+		if mName in ('Construct','Release'): continue # already defined above
+
+		mReference = method_json.get('methodname_flat') or f'{class_}::{mName}'
+		
+		params = { p['paramname']:p for p in method_json['params']}
+		params_str = ''.join( (f', py::arg("{k}")' for k in params.keys()) ) 
+		
+		# TODO : wrap return_type if necessary
+		return_type = method_json['returntype']
+
+		py_mName = method_renames.get(mName) or mName
+		binds +=  f'\t.def("{py_mName}", &{mReference}{params_str})'
 	
 	fields = [ # name, actualtype, sizebracketed
 		parse_type(f['fieldname'], f['fieldtype'])
@@ -111,37 +167,32 @@ def define_class(class_json:dict):
 		if f.get('private') == None # if public
 	]
 
-
 	for fName, actualtype, size in fields:
 
-		# SteamNetworkingConfigValue_t union member is weird
-		if fName == 'm_int64': fName = 'm_val'
+		if policies.get(actualtype) == 'py_skip':
+			#print('ignoring', py_class, fName, actualtype, size)
+			continue
+
+		if class_policy: fName = class_policy.get(fName) or fName
 		
-		simple_fName = fName[2:] if fName.startswith('m_') else fName
+		py_fName = fName[2:] if fName.startswith('m_') else fName
 
-		if fName == '':
-			# is a function pointer. ignore for now
-			print('ignoring', simple_class_, actualtype)
+		if '(*m_' in actualtype:
+			print('ignoring method pointer', py_class, actualtype)
 			continue
-
-		if actualtype == 'const char **':
-			# SteamParamStringArray is only struct with const char **
-			print('ignoring', simple_class_, fName)
-			continue
-
 
 		if actualtype == 'char' and size:
-			binds += f'''	.def_property("{simple_fName}",
+			binds += f'''	.def_property("{py_fName}",
 			[](const {class_}& x) {{ return get_char_array(x.{fName}); }},
 			[]({class_}& x, const std::string& s) {{ set_char_array(x.{fName}, s); }})'''
 			continue
 		
 		if size:
-			#binds += f'''	.def_property("{simple_fName}",
+			#binds += f'''	.def_property("{py_fName}",
 			#[](const {class_}& x) {{ return get_fixed_array(x.{fName}); }},
 			#[]({class_}& x, const std::vector<{actualtype}>& values) {{ set_fixed_array(x.{fName}, values); }})'''
 
-			binds += f'''	.def_property_readonly("{simple_fName}",
+			binds += f'''	.def_property_readonly("{py_fName}",
 			[]({class_}& x) {{ return FixedArrayView<{actualtype}, {size}>{{ x.{fName} }}; }},
 			py::return_value_policy::reference_internal)'''
 
@@ -150,7 +201,7 @@ def define_class(class_json:dict):
 
 			continue
 
-		binds += f'\t.def_readwrite("{simple_fName}", &{class_}::{fName})'
+		binds += f'\t.def_readwrite("{py_fName}", &{class_}::{fName})'
 	binds += ';'
 
 

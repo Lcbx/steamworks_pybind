@@ -150,6 +150,17 @@ namespace detail {
 	};
 }}
 
+template <typename T>
+struct ReleaseDeleter {
+    void operator()(T* ptr) const noexcept {
+        if (ptr) {
+            ptr->Release();
+        }
+    }
+};
+
+template <typename T>
+using ReleasePtr = std::unique_ptr<T, ReleaseDeleter<T>>;
 
 
 // module
@@ -1632,16 +1643,23 @@ PYBIND11_MODULE(steamworks, m) {
  	py::class_<servernetadr_t> _servernetadr_t_(m, "servernetadr");
  	_servernetadr_t_
  		.def(py::init<>())
+ 		.def("Init", &SteamAPI_servernetadr_t_Init, py::arg("ip"), py::arg("usQueryPort"), py::arg("usConnectionPort"))
  		.def("GetQueryPort", &SteamAPI_servernetadr_t_GetQueryPort)
+ 		.def("SetQueryPort", &SteamAPI_servernetadr_t_SetQueryPort, py::arg("usPort"))
  		.def("GetConnectionPort", &SteamAPI_servernetadr_t_GetConnectionPort)
+ 		.def("SetConnectionPort", &SteamAPI_servernetadr_t_SetConnectionPort, py::arg("usPort"))
  		.def("GetIP", &SteamAPI_servernetadr_t_GetIP)
+ 		.def("SetIP", &SteamAPI_servernetadr_t_SetIP, py::arg("unIP"))
  		.def("GetConnectionAddressString", &SteamAPI_servernetadr_t_GetConnectionAddressString)
  		.def("GetQueryAddressString", &SteamAPI_servernetadr_t_GetQueryAddressString)
+ 		.def("__lt__", &SteamAPI_servernetadr_t_IsLessThan, py::arg("netadr"))
+ 		.def("operator=", &SteamAPI_servernetadr_t_Assign, py::arg("that"))
  	;
  	py::class_<gameserveritem_t> _gameserveritem_t_(m, "gameserveritem");
  	_gameserveritem_t_
  		.def(py::init<>())
  		.def("GetName", &SteamAPI_gameserveritem_t_GetName)
+ 		.def("SetName", &SteamAPI_gameserveritem_t_SetName, py::arg("pName"))
  		.def_readwrite("NetAdr", &gameserveritem_t::m_NetAdr)
  		.def_readwrite("nPing", &gameserveritem_t::m_nPing)
  		.def_readwrite("bHadSuccessfulResponse", &gameserveritem_t::m_bHadSuccessfulResponse)
@@ -1820,9 +1838,15 @@ PYBIND11_MODULE(steamworks, m) {
  		.def(py::init<>())
  		.def("Clear", &SteamAPI_SteamNetworkingIPAddr_Clear)
  		.def("IsIPv6AllZeros", &SteamAPI_SteamNetworkingIPAddr_IsIPv6AllZeros)
+ 		.def("SetIPv6", &SteamAPI_SteamNetworkingIPAddr_SetIPv6, py::arg("ipv6"), py::arg("nPort"))
+ 		.def("SetIPv4", &SteamAPI_SteamNetworkingIPAddr_SetIPv4, py::arg("nIP"), py::arg("nPort"))
  		.def("IsIPv4", &SteamAPI_SteamNetworkingIPAddr_IsIPv4)
  		.def("GetIPv4", &SteamAPI_SteamNetworkingIPAddr_GetIPv4)
+ 		.def("SetIPv6LocalHost", &SteamAPI_SteamNetworkingIPAddr_SetIPv6LocalHost, py::arg("nPort"))
  		.def("IsLocalHost", &SteamAPI_SteamNetworkingIPAddr_IsLocalHost)
+ 		.def("ToString", &SteamAPI_SteamNetworkingIPAddr_ToString, py::arg("buf"), py::arg("cbBuf"), py::arg("bWithPort"))
+ 		.def("ParseString", &SteamAPI_SteamNetworkingIPAddr_ParseString, py::arg("pszStr"))
+ 		.def("__eq__", &SteamAPI_SteamNetworkingIPAddr_IsEqualTo, py::arg("x"))
  		.def("GetFakeIPType", &SteamAPI_SteamNetworkingIPAddr_GetFakeIPType)
  		.def("IsFakeIP", &SteamAPI_SteamNetworkingIPAddr_IsFakeIP)
  		.def_property_readonly("ipv6",
@@ -1835,17 +1859,29 @@ PYBIND11_MODULE(steamworks, m) {
  		.def(py::init<>())
  		.def("Clear", &SteamAPI_SteamNetworkingIdentity_Clear)
  		.def("IsInvalid", &SteamAPI_SteamNetworkingIdentity_IsInvalid)
+ 		.def("SetSteamID", &SteamAPI_SteamNetworkingIdentity_SetSteamID, py::arg("steamID"))
  		.def("GetSteamID", &SteamAPI_SteamNetworkingIdentity_GetSteamID)
+ 		.def("SetSteamID64", &SteamAPI_SteamNetworkingIdentity_SetSteamID64, py::arg("steamID"))
  		.def("GetSteamID64", &SteamAPI_SteamNetworkingIdentity_GetSteamID64)
+ 		.def("SetXboxPairwiseID", &SteamAPI_SteamNetworkingIdentity_SetXboxPairwiseID, py::arg("pszString"))
  		.def("GetXboxPairwiseID", &SteamAPI_SteamNetworkingIdentity_GetXboxPairwiseID)
+ 		.def("SetPSNID", &SteamAPI_SteamNetworkingIdentity_SetPSNID, py::arg("id"))
  		.def("GetPSNID", &SteamAPI_SteamNetworkingIdentity_GetPSNID)
+ 		.def("SetIPAddr", &SteamAPI_SteamNetworkingIdentity_SetIPAddr, py::arg("addr"))
  		.def("GetIPAddr", &SteamAPI_SteamNetworkingIdentity_GetIPAddr)
+ 		.def("SetIPv4Addr", &SteamAPI_SteamNetworkingIdentity_SetIPv4Addr, py::arg("nIPv4"), py::arg("nPort"))
  		.def("GetIPv4", &SteamAPI_SteamNetworkingIdentity_GetIPv4)
  		.def("GetFakeIPType", &SteamAPI_SteamNetworkingIdentity_GetFakeIPType)
  		.def("IsFakeIP", &SteamAPI_SteamNetworkingIdentity_IsFakeIP)
  		.def("SetLocalHost", &SteamAPI_SteamNetworkingIdentity_SetLocalHost)
  		.def("IsLocalHost", &SteamAPI_SteamNetworkingIdentity_IsLocalHost)
+ 		.def("SetGenericString", &SteamAPI_SteamNetworkingIdentity_SetGenericString, py::arg("pszString"))
  		.def("GetGenericString", &SteamAPI_SteamNetworkingIdentity_GetGenericString)
+ 		.def("SetGenericBytes", &SteamAPI_SteamNetworkingIdentity_SetGenericBytes, py::arg("data"), py::arg("cbLen"))
+ 		.def("GetGenericBytes", &SteamAPI_SteamNetworkingIdentity_GetGenericBytes, py::arg("cbLen"))
+ 		.def("__eq__", &SteamAPI_SteamNetworkingIdentity_IsEqualTo, py::arg("x"))
+ 		.def("ToString", &SteamAPI_SteamNetworkingIdentity_ToString, py::arg("buf"), py::arg("cbBuf"))
+ 		.def("ParseString", &SteamAPI_SteamNetworkingIdentity_ParseString, py::arg("pszStr"))
  		.def_readwrite("eType", &SteamNetworkingIdentity::m_eType)
  		.def_readwrite("cbSize", &SteamNetworkingIdentity::m_cbSize)
  		.def_property("szUnknownRawString",
@@ -1908,9 +1944,8 @@ PYBIND11_MODULE(steamworks, m) {
 			[](SteamNetConnectionRealTimeLaneStatus_t& x) { return FixedArrayView<uint32, 10>{ x.reserved }; },
 			py::return_value_policy::reference_internal)
  	;
- 	py::class_<SteamNetworkingMessage_t, std::unique_ptr<SteamNetworkingMessage_t, py::nodelete>> _steamnetworkingmessage_t_(m, "SteamNetworkingMessage");
+ 	py::class_<SteamNetworkingMessage_t, ReleasePtr<SteamNetworkingMessage_t>> _steamnetworkingmessage_t_(m, "SteamNetworkingMessage");
  	_steamnetworkingmessage_t_
- 		.def("Release", &SteamAPI_SteamNetworkingMessage_t_Release)
  		.def_readwrite("pData", &SteamNetworkingMessage_t::m_pData)
  		.def_readwrite("cbSize", &SteamNetworkingMessage_t::m_cbSize)
  		.def_readwrite("conn", &SteamNetworkingMessage_t::m_conn)
@@ -1934,6 +1969,11 @@ PYBIND11_MODULE(steamworks, m) {
  	py::class_<SteamNetworkingConfigValue_t> _steamnetworkingconfigvalue_t_(m, "SteamNetworkingConfigValue");
  	_steamnetworkingconfigvalue_t_
  		.def(py::init<>())
+ 		.def("SetInt32", &SteamAPI_SteamNetworkingConfigValue_t_SetInt32, py::arg("eVal"), py::arg("data"))
+ 		.def("SetInt64", &SteamAPI_SteamNetworkingConfigValue_t_SetInt64, py::arg("eVal"), py::arg("data"))
+ 		.def("SetFloat", &SteamAPI_SteamNetworkingConfigValue_t_SetFloat, py::arg("eVal"), py::arg("data"))
+ 		.def("SetPtr", &SteamAPI_SteamNetworkingConfigValue_t_SetPtr, py::arg("eVal"), py::arg("data"))
+ 		.def("SetString", &SteamAPI_SteamNetworkingConfigValue_t_SetString, py::arg("eVal"), py::arg("data"))
  		.def_readwrite("eValue", &SteamNetworkingConfigValue_t::m_eValue)
  		.def_readwrite("eDataType", &SteamNetworkingConfigValue_t::m_eDataType)
  		.def_readwrite("val", &SteamNetworkingConfigValue_t::m_val)
@@ -1943,6 +1983,7 @@ PYBIND11_MODULE(steamworks, m) {
  		.def(py::init<>())
  		.def("Clear", &SteamAPI_SteamDatagramHostedAddress_Clear)
  		.def("GetPopID", &SteamAPI_SteamDatagramHostedAddress_GetPopID)
+ 		.def("SetDevAddress", &SteamAPI_SteamDatagramHostedAddress_SetDevAddress, py::arg("nIP"), py::arg("nPort"), py::arg("popid"))
  		.def_readwrite("cbSize", &SteamDatagramHostedAddress::m_cbSize)
  		.def_property("data",
 			[](const SteamDatagramHostedAddress& x) { return get_char_array(x.m_data); },
@@ -1960,18 +2001,18 @@ PYBIND11_MODULE(steamworks, m) {
 			[](const SteamDatagramGameCoordinatorServerLogin& x) { return get_char_array(x.m_appData); },
 			[](SteamDatagramGameCoordinatorServerLogin& x, const std::string& s) { set_char_array(x.m_appData, s); })
  	;
- 	bind_fixed_array_view<uint32, 50>(m, "uint32array50");
+ 	bind_fixed_array_view<CSteamID, 50>(m, "CSteamIDarray50");
+ 	bind_fixed_array_view<uint8, 20>(m, "uint8array20");
+ 	bind_fixed_array_view<uint8, 512>(m, "uint8array512");
+ 	bind_fixed_array_view<float, 50>(m, "floatarray50");
  	bind_fixed_array_view<AppId_t, 32>(m, "AppId_tarray32");
  	bind_fixed_array_view<uint8, 2560>(m, "uint8array2560");
- 	bind_fixed_array_view<CSteamID, 50>(m, "CSteamIDarray50");
- 	bind_fixed_array_view<uint32, 63>(m, "uint32array63");
- 	bind_fixed_array_view<uint32, 10>(m, "uint32array10");
- 	bind_fixed_array_view<float, 50>(m, "floatarray50");
- 	bind_fixed_array_view<PublishedFileId_t, 50>(m, "PublishedFileId_tarray50");
- 	bind_fixed_array_view<uint8, 20>(m, "uint8array20");
  	bind_fixed_array_view<uint8, 16>(m, "uint8array16");
- 	bind_fixed_array_view<uint32, 15>(m, "uint32array15");
- 	bind_fixed_array_view<uint8, 512>(m, "uint8array512");
+ 	bind_fixed_array_view<uint32, 63>(m, "uint32array63");
+ 	bind_fixed_array_view<PublishedFileId_t, 50>(m, "PublishedFileId_tarray50");
  	bind_fixed_array_view<uint16, 8>(m, "uint16array8");
+ 	bind_fixed_array_view<uint32, 10>(m, "uint32array10");
+ 	bind_fixed_array_view<uint32, 15>(m, "uint32array15");
+ 	bind_fixed_array_view<uint32, 50>(m, "uint32array50");
  	
 }
