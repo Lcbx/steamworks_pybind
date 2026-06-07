@@ -72,16 +72,38 @@ def parse_type(name, typename:str)->tuple:
 
 	return name, typename, arr_size
 
+
+#scalars = {'signed', 'unsigned', 'char', 'short', 'int', 'long', 'float', 'double'}
+#for types_ in api_json['typedefs']:
+#	name = types_['typedef']
+#	actualtype = types_['type']
+#	if all(map(lambda s: s in scalars, actualtype.split(' '))):
+#		scalars.add(name)
+
 def define_class(class_json:dict):
 	global binds
 	class_ = class_json['struct']
-	bName = class_.lower()
 	simple_class_ = class_[:-2] if class_.endswith('_t') else class_
+	bName = f'_{class_.lower()}_'
 
-	binds += f'py::class_<{class_}> {bName}(m, "{simple_class_}");'
+	methods = {m['methodname']:m for m in mtds} if (mtds := class_json.get('methods')) else {}
 
-	# TODO: take method definitions into account
-	binds += f'{bName}.def(py::init<>())'
+	no_constructor = 'Release' in methods
+	addendum = f', std::unique_ptr<{class_}, py::nodelete>' if no_constructor else ''
+	
+	binds += f'py::class_<{class_}{addendum}> {bName}(m, "{simple_class_}");'
+	binds += bName
+
+	if not no_constructor:
+		binds += f'\t.def(py::init<>())'
+
+	# TODO: take all method definitions into account
+	for mName, value in methods.items():
+		if mName == 'Construct': pass # already defined above 
+		elif not value['params'] :
+			if (nFlat := value['methodname_flat']):
+				binds +=  f'\t.def("{mName}", &{nFlat})'
+			else: binds += f'\t.def("{mName}", &{class_}::{mName})'
 	
 	fields = [ # name, actualtype, sizebracketed
 		parse_type(f['fieldname'], f['fieldtype'])
@@ -89,24 +111,67 @@ def define_class(class_json:dict):
 		if f.get('private') == None # if public
 	]
 
+
 	for fName, actualtype, size in fields:
+
+		# SteamNetworkingConfigValue_t union member is weird
+		if fName == 'm_int64': fName = 'm_val'
+		
 		simple_fName = fName[2:] if fName.startswith('m_') else fName
+
+		if fName == '':
+			# is a function pointer. ignore for now
+			print('ignoring', simple_class_, actualtype)
+			continue
+
+		if actualtype == 'const char **':
+			# SteamParamStringArray is only struct with const char **
+			print('ignoring', simple_class_, fName)
+			continue
+
+
 		if actualtype == 'char' and size:
 			binds += f'''	.def_property("{simple_fName}",
 			[](const {class_}& x) {{ return get_char_array(x.{fName}); }},
-			[]({class_}& x, const std::string& s) {{ return set_char_array(x.{fName}, s); }})'''
+			[]({class_}& x, const std::string& s) {{ set_char_array(x.{fName}, s); }})'''
+			continue
+		
+		if size:
+			#binds += f'''	.def_property("{simple_fName}",
+			#[](const {class_}& x) {{ return get_fixed_array(x.{fName}); }},
+			#[]({class_}& x, const std::vector<{actualtype}>& values) {{ set_fixed_array(x.{fName}, values); }})'''
+
+			binds += f'''	.def_property_readonly("{simple_fName}",
+			[]({class_}& x) {{ return FixedArrayView<{actualtype}, {size}>{{ x.{fName} }}; }},
+			py::return_value_policy::reference_internal)'''
+
+			# allows use of array view
+			arraybinds.add( (actualtype, size) )
+
 			continue
 
 		binds += f'\t.def_readwrite("{simple_fName}", &{class_}::{fName})'
 	binds += ';'
 
 
+
 def find_class_json(name:str):
 	return [ d for d in struct_json if d['struct'] == name ][0]
 
-if True:
+
+arraybinds = set()
+if False:
 	define_class(find_class_json('MatchMakingKeyValuePair_t'))
 	define_class(find_class_json('FriendGameInfo_t'))
+	define_class(find_class_json('FriendsEnumerateFollowingList_t'))
+	define_class(find_class_json('SteamNetworkingMessage_t'))
+else:
+	classes = api_json['callback_structs'] + api_json['structs']
+	for cls in classes:
+		define_class(cls)
+		#if cls['struct'] == 'SteamNetworkingMessage_t': break
+for tp,sz in arraybinds:
+	binds += f'bind_fixed_array_view<{tp}, {sz}>(m, "{tp}array{sz}");'
 
 
 
@@ -162,51 +227,20 @@ def define_enum(enum_json:dict, interface:dict|None=None)->None:
 	(interface if interface else globals())[enumname] = cls
 
 
-for enum in api_json['enums']:
-	define_enum(enum)
+#for enum in api_json['enums']:
+#	define_enum(enum)
 
 
 ## typedefs ---------------------------------
 # NOTE: requires some forward declarations
 
 
-for td in api_json['typedefs']:
-	typename = td['typedef']
-	typename, actualtype, sizebracketed = parse_type(typename, td['type'])
-	#print(typename, actualtype, sizebracketed)
-	typedef(typename, f'{actualtype} {typename}{sizebracketed}')
+#for td in api_json['typedefs']:
+#	typename = td['typedef']
+#	typename, actualtype, sizebracketed = parse_type(typename, td['type'])
+#	#print(typename, actualtype, sizebracketed)
+#	typedef(typename, f'{actualtype} {typename}{sizebracketed}')
 
 
-## structs ---------------------------------
-# TODO: create wrapper python classes using type()
-# NOTE: not sure what to do with callback_structs' callback_id
-
-def define_struct(struct_json:dict):
-	structname = struct_json['struct']
-	if structname in defined_types: return
-	
-	# forward declaration for structs thatuse references to themselves
-	#typedef(structname, f'struct {structname} {structname}')
-
-	fields = [ ( # public, name, actualtype, sizebracketed
-		f.get('private') == None, *parse_type(f['fieldname'], f['fieldtype'])
-		) for f in struct_json['fields']
-	]
-	#print(*fields)
-
-	partial = any(map(lambda _public: not _public[0], fields))
-
-	declaration = f"""struct {structname} {{{ ''.join((
-	f'\n\t{actualtype} {name}{sizebracketed};'
-	for public, name, actualtype, sizebracketed in fields if public
-	))
-}{ '\n\t...; // allow partial declarations' if partial else ''}
-}}"""
-
-	extern(structname,  declaration)
-
-if False:
-	for st in api_json['callback_structs'] + api_json['structs']:
-		define_struct(st)
 
 del binds
