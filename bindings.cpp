@@ -58,17 +58,17 @@ void set_fixed_array(T (&arr)[N], const std::vector<T>& values) {
 
 template <typename T, size_t N>
 struct FixedArrayView {
-	T* data;
+	T (&data)[N];
 
-	T get(size_t i) const {
-		if (i < 0) i = (i - i*N)%N;
-		if (i >= N) throw py::index_error();
+	T get(int32 i) const {
+		if (i < 0) i += N;
+		if (i < 0 || i >= N) throw py::index_error();
 		return data[i];
 	}
 
-	void set(size_t i, const T& value) {
-		if (i < 0) i = (i - i*N)%N;
-		if (i >= N) throw py::index_error();
+	void set(int32 i, const T& value) {
+		if (i < 0) i += N;
+		if (i < 0 || i >= N) throw py::index_error();
 		data[i] = value;
 	}
 
@@ -2001,18 +2001,18 @@ PYBIND11_MODULE(steamworks, m) {
 			[](const SteamDatagramGameCoordinatorServerLogin& x) { return get_char_array(x.m_appData); },
 			[](SteamDatagramGameCoordinatorServerLogin& x, const std::string& s) { set_char_array(x.m_appData, s); })
  	;
- 	bind_fixed_array_view<CSteamID, 50>(m, "CSteamIDarray50");
- 	bind_fixed_array_view<uint8, 20>(m, "uint8array20");
- 	bind_fixed_array_view<uint8, 512>(m, "uint8array512");
  	bind_fixed_array_view<float, 50>(m, "floatarray50");
+ 	bind_fixed_array_view<uint16, 8>(m, "uint16array8");
+ 	bind_fixed_array_view<uint8, 20>(m, "uint8array20");
  	bind_fixed_array_view<AppId_t, 32>(m, "AppId_tarray32");
+ 	bind_fixed_array_view<CSteamID, 50>(m, "CSteamIDarray50");
+ 	bind_fixed_array_view<uint32, 63>(m, "uint32array63");
+ 	bind_fixed_array_view<uint32, 15>(m, "uint32array15");
  	bind_fixed_array_view<uint8, 2560>(m, "uint8array2560");
  	bind_fixed_array_view<uint8, 16>(m, "uint8array16");
- 	bind_fixed_array_view<uint32, 63>(m, "uint32array63");
+ 	bind_fixed_array_view<uint8, 512>(m, "uint8array512");
  	bind_fixed_array_view<PublishedFileId_t, 50>(m, "PublishedFileId_tarray50");
- 	bind_fixed_array_view<uint16, 8>(m, "uint16array8");
- 	bind_fixed_array_view<uint32, 10>(m, "uint32array10");
- 	bind_fixed_array_view<uint32, 15>(m, "uint32array15");
  	bind_fixed_array_view<uint32, 50>(m, "uint32array50");
+ 	bind_fixed_array_view<uint32, 10>(m, "uint32array10");
  	
 }

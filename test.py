@@ -14,8 +14,10 @@ assert(int(fi.steamIDLobby) == 42)
 
 ffl = steam.FriendsEnumerateFollowingList()
 ffl.rgSteamID[1] = steam.SteamID(43)
-print(ffl.rgSteamID)
+ffl.rgSteamID[-1] = steam.SteamID(20)
+
 assert(int(ffl.rgSteamID[1]) == 43)
+assert(int(ffl.rgSteamID[49]) == 20)
 assert(int(ffl.rgSteamID.to_list()[1]) == 43)
 
 ip1 = steam.SteamNetworkingIPAddr()
