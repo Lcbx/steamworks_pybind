@@ -20,6 +20,20 @@ assert(int(ffl.rgSteamID[1]) == 43)
 assert(int(ffl.rgSteamID[49]) == 20)
 assert(int(ffl.rgSteamID.to_list()[1]) == 43)
 
+# assert that out of bounds throw
+passed = True
+try:
+    ffl.rgSteamID[50] = steam.SteamID(255)
+    passed = False
+except:
+    pass
+try:
+    ffl.rgSteamID[-51] = steam.SteamID(255)
+    passed = False
+except:
+    pass
+assert(passed)
+
 ip1 = steam.SteamNetworkingIPAddr()
 ip1.port = 1221
 ip2 = steam.SteamNetworkingIPAddr()
@@ -27,5 +41,13 @@ ip2.port = 1221
 assert(ip1 == ip2)
 ip2.port = 45
 assert(ip1 != ip2)
+
+import ctypes
+buf = ctypes.create_string_buffer(256)
+addr = ctypes.addressof(buf)
+buf[0] = 69
+
+ip2.ToString(buf = addr, cbBuf=256, bWithPort = True)
+assert( '45' in bytes(buf).decode() )
 
 steam.shutdown()

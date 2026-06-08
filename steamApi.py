@@ -2,6 +2,7 @@ from pathlib import Path
 from json import loads
 from re import compile as regex
 from enum import IntEnum
+from copy import copy
 
 
 class BindingsFile:
@@ -10,8 +11,9 @@ class BindingsFile:
 		self.f = open(fpath, 'r+')
 		#print('bindings file open')
 
-	def reset(self):
+	def reset(self)->None:
 		p = 0
+		self.f.seek(p)
 		SEPERATOR = '/* __PROCEDURALY_GENERATED__ */'
 		while line := self.f.readline():
 			if SEPERATOR in line: break
@@ -19,11 +21,11 @@ class BindingsFile:
 		self.f.truncate(p)
 		self.f.seek(p)
 
-	def __iadd__(self, s:str)->BindingsFile:
+	def __iadd__(self, s:str)->'BindingsFile':
 		self.f.write(f' \t{s}\n')
 		return self
 
-	def __del__(self):
+	def __del__(self)->None:
 		#print('bindings file released')
 		self.__iadd__('\n}') # close module
 		self.f.close()
@@ -34,7 +36,6 @@ binds += '\n'
 
 
 api_json = loads(Path('../public/steam/steam_api.json').read_text())
-struct_json = api_json['callback_structs'] + api_json['structs']
 
 policies = {
 
@@ -133,12 +134,15 @@ def define_class(class_json:dict):
 	class_policy = policies.get(class_) or {}
 
 	py_class = class_[:-2] if class_.endswith('_t') else class_
-	bName = f'_{class_.lower()}_'
+	bName = f'_{class_.lower()}'
 
 	py_type = class_policy.get('py_type')
 	
 	binds += f'py::class_<{class_}{f", {py_type}" if py_type else ""}> {bName}(m, "{py_class}");'
 	binds += bName
+
+	# JIC we need a pointer sometimes on the python side
+	binds += f'\t.def("_addr", []({class_}& self) {{ return reinterpret_cast<uintptr_t>(&self); }})'
 
 	methods = {m['methodname']:m for m in mtds} if (mtds := class_json.get('methods')) else {}
 	has_constructor = not 'Release' in methods
@@ -146,20 +150,42 @@ def define_class(class_json:dict):
 	if has_constructor:
 		binds += f'\t.def(py::init<>())'
 
-	# TODO: make this machinery common with interfaces
+	# TODO: share method implementation logic with interfaces
 	for mName, method_json in methods.items():
 		if mName in ('Construct','Release'): continue # already defined above
 
-		mReference = method_json.get('methodname_flat') or f'{class_}::{mName}'
-		
-		params = { p['paramname']:p for p in method_json['params']}
-		params_str = ''.join( (f', py::arg("{k}")' for k in params.keys()) ) 
+		param_json = method_json['params']
+		param_names = [ p['paramname'] for p in param_json ]
+		param_types = [ p['paramtype'] for p in param_json ]
 		
 		# TODO : wrap return_type if necessary
 		return_type = method_json['returntype']
 
 		py_mName = method_renames.get(mName) or mName
-		binds +=  f'\t.def("{py_mName}", &{mReference}{params_str})'
+
+		# TODO: for classes, expose getters & setters as properties
+
+		methodname = (method_json.get('methodname_flat') or f'{class_}::{mName}')
+		py_params_str = ''.join( (f', py::arg("{k}")' for k in param_names) ) 
+
+		ptrParamIndices = list(filter(lambda i: '*' in param_types[i], range(len(param_types))))
+		#print(py_class, mName, param_types, ptrParamIndices)
+		if len(ptrParamIndices):
+			conversions = ''
+			new_param_names = copy(param_names)
+			for i in ptrParamIndices:
+				newParamName = f'ptr{i}'
+				conversions += f'\n\t\t\tauto* {newParamName} = reinterpret_cast<{param_types[i]}>({param_names[i]});'
+				new_param_names[i] = newParamName
+				param_types[i] = 'uintptr_t'
+
+			typed_params = ', '.join( f'{t} {n}' for t, n in zip(param_types, param_names) )
+			mReference = f'''[]({class_}* self, {typed_params}) {{ {conversions}
+			{methodname}(self, {', '.join(new_param_names)}); }}'''
+		else:
+			mReference = f'&{methodname}'
+
+		binds +=  f'\t.def("{py_mName}", {mReference}{py_params_str})'
 	
 	fields = [ # name, actualtype, sizebracketed
 		parse_type(f['fieldname'], f['fieldtype'])
@@ -207,20 +233,14 @@ def define_class(class_json:dict):
 
 
 def find_class_json(name:str):
-	return [ d for d in struct_json if d['struct'] == name ][0]
+	return [ d for d in classes if d['struct'] == name ][0]
 
 
 arraybinds = set()
-if False:
-	define_class(find_class_json('MatchMakingKeyValuePair_t'))
-	define_class(find_class_json('FriendGameInfo_t'))
-	define_class(find_class_json('FriendsEnumerateFollowingList_t'))
-	define_class(find_class_json('SteamNetworkingMessage_t'))
-else:
-	classes = api_json['callback_structs'] + api_json['structs']
-	for cls in classes:
-		define_class(cls)
-		#if cls['struct'] == 'SteamNetworkingMessage_t': break
+classes = api_json['callback_structs'] + api_json['structs']
+#define_class(find_class_json('SteamIPAddress_t'))
+for cls in classes:
+	define_class(cls)
 for tp,sz in sorted(arraybinds): # sorted is to have deterministic order
 	binds += f'bind_fixed_array_view<{tp}, {sz}>(m, "{tp}array{sz}");'
 
