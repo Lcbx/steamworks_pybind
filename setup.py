@@ -30,8 +30,8 @@ setup(
     description='WIP procedural bindings for steamworks',
     ext_modules=[
         Pybind11Extension(
-            "steamworks",
-            ["bindings.cpp"],
+            'steamworks',
+            ['bindings.cpp'],
             include_dirs=[
                 '../public',
             ],

@@ -38,24 +38,40 @@ binds += '\n'
 api_json = loads(Path('../public/steam/steam_api.json').read_text())
 
 policies = {
-
+	
+	# field renames
 	'SteamNetworkingConfigValue_t' : {
 	# SteamNetworkingConfigValue_t union member is weird, renaming it fixes compile error
 		'm_int64': 'm_val',
 	},
 
-	# SteamNetworkingMessage_t has no dextructor, expects you to call release
-	# use this type as a proxy for python
-	'SteamNetworkingMessage_t' : { 'py_type' : 'ReleasePtr<SteamNetworkingMessage_t>', },
+	'py_type_conversion' : {
+		# SteamNetworkingMessage_t has no destructor, expects you to call release
+		# use this type as a proxy to allow python gc to manage lifetime
+		'SteamNetworkingMessage_t' : 'ReleasePtr<SteamNetworkingMessage_t>',
+		#'ISteamMatchmakingPingResponse': 'PingResponseAdapter',
 
-	# SteamParamStringArray is only struct with const char **
-	# we have a custom type_caster for it
-	'const char **' : 'py_skip',
+		# NOTE: when binding cpp style methods, these conversions are not needed
+		'CSteamID' : 'uint64_steamid',
+		'CGameID' : 'uint64_gameid',
+	},
 
-	# we have another way to bind relase/free
-	'void (*m_pfnFreeData)(SteamNetworkingMessage_t *)' : 'py_skip',
-	'void (*m_pfnRelease)(SteamNetworkingMessage_t *)'  : 'py_skip',
-	
+	# field types to skip / ignore
+	'py_skip': {
+		# SteamParamStringArray is only struct with const char **
+		# we have a custom type_caster for it
+		'const char **',
+		# we have another way to bind relase/free
+		'void (*m_pfnFreeData)(SteamNetworkingMessage_t *)',
+		'void (*m_pfnRelease)(SteamNetworkingMessage_t *)',
+	},
+
+	# no constructor
+	'no_constructor' : { 'SteamNetworkingMessage_t', },
+
+	'constructible_interfaces' : {'ISteamApps', 'ISteamUserStats', 'ISteamTimeline', 'ISteamRemoteStorage', 'ISteamGameServerStats', 'ISteamNetworkingSockets', 'ISteamUser', 'ISteamParentalSettings', 'ISteamFriends', 'ISteamMatchmakingServers', 'ISteamController', 'ISteamGameServer', 'ISteamMatchmaking', 'ISteamNetworkingUtils', 'ISteamNetworking', 'ISteamUtils', 'ISteamClient', 'ISteamMusic', 'ISteamNetworkingMessages', 'ISteamScreenshots', 'ISteamRemotePlay', 'ISteamHTMLSurface', 'ISteamVideo', 'ISteamUGC', 'ISteamParties', 'ISteamHTTP', 'ISteamInventory', 'ISteamInput'},
+	# do not exist : SteamMatchmakingServerListResponse, SteamMatchmakingPingResponse, SteamMatchmakingPlayersResponse, SteamMatchmakingRulesResponse, SteamNetworkingFakeUDPPort
+
 	'method_renames' : {
 		#'ToString'   : '__str__', # not 1 to 1
 		'operator=='  : '__eq__',
@@ -80,7 +96,11 @@ policies = {
 		#'operator**= : '__ipow__',		 # not a C++ operator
 	},
 }
-method_renames = policies['method_renames']
+method_renames : dict = policies['method_renames']
+field_types_skipped : set = policies['py_skip']
+type_conversions : dict = policies['py_type_conversion']
+no_constructor : set = policies['no_constructor']
+constructible_interfaces : set = policies['constructible_interfaces']
 
 # to determine whether to forward declare types
 # ik const, unsigned and * are not actually types but this simplifies things
@@ -128,64 +148,88 @@ def parse_type(name, typename:str)->tuple:
 #	if all(map(lambda s: s in scalars, actualtype.split(' '))):
 #		scalars.add(name)
 
-def define_class(class_json:dict):
+def define_methods(class_:str, class_json:dict, use_flat_methods:bool=True):
 	global binds
-	class_ = class_json['struct']
-	class_policy = policies.get(class_) or {}
+	methods = ({mName:m for m in mtds
+		if not (mName:=m['methodname']).endswith('_DEPRECATED')
+		} if (mtds := class_json.get('methods'))
+		else {})
 
-	py_class = class_[:-2] if class_.endswith('_t') else class_
-	bName = f'_{class_.lower()}'
-
-	py_type = class_policy.get('py_type')
-	
-	binds += f'py::class_<{class_}{f", {py_type}" if py_type else ""}> {bName}(m, "{py_class}");'
-	binds += bName
-
-	# JIC we need a pointer sometimes on the python side
-	binds += f'\t.def("_addr", []({class_}& self) {{ return reinterpret_cast<uintptr_t>(&self); }})'
-
-	methods = {m['methodname']:m for m in mtds} if (mtds := class_json.get('methods')) else {}
-	has_constructor = not 'Release' in methods
-
-	if has_constructor:
-		binds += f'\t.def(py::init<>())'
-
-	# TODO: share method implementation logic with interfaces
 	for mName, method_json in methods.items():
 		if mName in ('Construct','Release'): continue # already defined above
 
 		param_json = method_json['params']
 		param_names = [ p['paramname'] for p in param_json ]
-		param_types = [ p['paramtype'] for p in param_json ]
+		param_types = [ type_conversions.get(pType := p['paramtype']) or pType for p in param_json ]
 		
 		# TODO : wrap return_type if necessary
 		return_type = method_json['returntype']
 
 		py_mName = method_renames.get(mName) or mName
 
-		# TODO: for classes, expose getters & setters as properties
-
-		methodname = (method_json.get('methodname_flat') or f'{class_}::{mName}')
+		# TODO: expose getters & setters as pybind properties
+		flat_mName = method_json.get('methodname_flat') if use_flat_methods else None
+		methodname = flat_mName or f'{class_}::{mName}'
+		methodcall = f'{methodname}(self, ' if use_flat_methods else f'self->{mName}('
 		py_params_str = ''.join( (f', py::arg("{k}")' for k in param_names) ) 
 
-		ptrParamIndices = list(filter(lambda i: '*' in param_types[i], range(len(param_types))))
+		# indices of parameters of types : const T*, T* or T&
+		ptrParamIndices = list(filter(lambda i: (
+			(pEnd := (pType := param_types[i])[-1]) == '*' or
+			(not pType.startswith('const') and pEnd == '&')
+		), range(len(param_types))))
 		#print(py_class, mName, param_types, ptrParamIndices)
-		if len(ptrParamIndices):
+
+		if len(ptrParamIndices): #(new_return_type := type_conversions.get(return_type)) or len(ptrParamIndices):
 			conversions = ''
 			new_param_names = copy(param_names)
 			for i in ptrParamIndices:
 				newParamName = f'ptr{i}'
-				conversions += f'\n\t\t\tauto* {newParamName} = reinterpret_cast<{param_types[i]}>({param_names[i]});'
-				new_param_names[i] = newParamName
+				old_pType = param_types[i]
+				old_pName = param_names[i]
+				cast_type = old_pType.replace('&', '*'); dereference = '*' if cast_type != old_pType else ''
+				conversions += f'\n\t\t\t{old_pType} {newParamName} = {dereference}reinterpret_cast<{cast_type}>({old_pName});'
 				param_types[i] = 'uintptr_t'
+				new_param_names[i] = newParamName
 
+			rType = return_type #new_return_type or return_type
+			if rType != 'void': methodcall = f'return ({rType}){methodcall}'
 			typed_params = ', '.join( f'{t} {n}' for t, n in zip(param_types, param_names) )
 			mReference = f'''[]({class_}* self, {typed_params}) {{ {conversions}
-			{methodname}(self, {', '.join(new_param_names)}); }}'''
+			{methodcall}{', '.join(new_param_names)}); }}'''
 		else:
 			mReference = f'&{methodname}'
+		return_policy = ', py::return_value_policy::reference' if return_type.replace(' *', '') in all_interface_names else ''
+		binds +=  f'\t.def("{py_mName}", {mReference}{py_params_str})' #{return_policy})'
 
-		binds +=  f'\t.def("{py_mName}", {mReference}{py_params_str})'
+
+def define_class(class_:str,class_json:dict, is_struct:bool=True):
+	global binds
+	class_policy = policies.get(class_) or {}
+
+	py_class = class_[:-2] if class_.endswith('_t') else class_
+	bName = f'_{class_.lower()}'
+
+	if class_ in constructible_interfaces:
+		concreteType = class_[1:] # no 'I' ex: ISteamClient -> SteamClient
+		binds += f'm.def("{concreteType}",[]() -> {class_}* {{ return {concreteType}(); }}, py::return_value_policy::reference);'
+	
+	binds += f'py::class_<{class_}{(
+		# specify proxy type if one is defined
+		f", {converted}" if (converted := type_conversions.get(class_))
+		# use a unique_ptr with no delete for interfaces
+		else f", std::unique_ptr<{class_}, py::nodelete>" if not is_struct else ""
+		)}> {bName}(m, "{py_class}");'
+	binds += bName
+
+	# JIC we need a pointer sometimes on the python side
+	binds += f'\t.def_property_readonly("ptr", []({class_}& self) {{ return reinterpret_cast<uintptr_t>(&self); }})'
+
+	if is_struct and not class_ in no_constructor:
+		binds += f'\t.def(py::init<>())'
+
+	define_methods(class_, class_json)
+
 	
 	fields = [ # name, actualtype, sizebracketed
 		parse_type(f['fieldname'], f['fieldtype'])
@@ -195,11 +239,11 @@ def define_class(class_json:dict):
 
 	for fName, actualtype, size in fields:
 
-		if policies.get(actualtype) == 'py_skip':
+		if actualtype in field_types_skipped:
 			#print('ignoring', py_class, fName, actualtype, size)
 			continue
 
-		if class_policy: fName = class_policy.get(fName) or fName
+		fName = class_policy.get(fName) or fName
 		
 		py_fName = fName[2:] if fName.startswith('m_') else fName
 
@@ -232,26 +276,35 @@ def define_class(class_json:dict):
 
 
 
-def find_class_json(name:str):
-	return [ d for d in classes if d['struct'] == name ][0]
-
+struct_json = api_json['callback_structs'] + api_json['structs']
+interfaces_json = api_json['interfaces']
+all_interface_names = { i['classname'] for i in interfaces_json }
+#print(all_interface_names)
 
 arraybinds = set()
-classes = api_json['callback_structs'] + api_json['structs']
-#define_class(find_class_json('SteamIPAddress_t'))
-for cls in classes:
-	define_class(cls)
+
+for cls in struct_json:
+	class_ = cls['struct']
+	define_class(class_, cls)
+
+#def find_class_json(name:str):
+#	return [ d for d in classes if d['struct'] == name ][0]
+#define_class('SteamIPAddress_t', find_class_json('SteamIPAddress_t'))
+
+for cls in interfaces_json:
+	class_ = cls['classname']
+	define_class(class_, cls, is_struct=False)
+
 for tp,sz in sorted(arraybinds): # sorted is to have deterministic order
 	binds += f'bind_fixed_array_view<{tp}, {sz}>(m, "{tp}array{sz}");'
 
+binds += 'bind_response_adapters(m);'
 
 
-
-
-
-
-
-
+# TODO:
+# * split bindings into multiple files (compiler runs out of heap space with all structs/classes)
+# * bind enums
+# * test, test, test
 
 def typedef(name:str, declaration:str)->None:
 	global known_types
