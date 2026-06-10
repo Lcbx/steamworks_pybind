@@ -155,9 +155,13 @@ def define_methods(class_:str, class_json:dict, use_flat_methods:bool=True):
 				newParamName = f'ptr{i}'
 				old_pType = param_types[i]
 				old_pName = param_names[i]
-				cast_type = old_pType.replace('&', '*'); dereference = '*' if cast_type != old_pType else ''
-				conversions += f'\n\t\t\t{old_pType} {newParamName} = {dereference}reinterpret_cast<{cast_type}>({old_pName});'
-				param_types[i] = 'uintptr_t'
+				if old_pType == 'const char *':
+					conversions += f'\n\t\t\tconst char* {newParamName} = {old_pName}.c_str();'
+					param_types[i] = 'std::string'
+				else:
+					cast_type = old_pType.replace('&', '*'); dereference = '*' if cast_type != old_pType else ''
+					conversions += f'\n\t\t\t{old_pType} {newParamName} = {dereference}reinterpret_cast<{cast_type}>({old_pName});'
+					param_types[i] = 'uintptr_t'
 				new_param_names[i] = newParamName
 
 			rType = return_type #new_return_type or return_type
@@ -197,8 +201,14 @@ def define_class(class_:str,class_json:dict, is_struct:bool=True):
 		for const_json in class_json['consts']:
 			define_const(const_json, bName, class_)
 
-	binds += bName
+	# size of struct in bytes
+	binds += f'{bName}.attr("nbytes") = py::int_(sizeof({class_}));'
 
+	# callback id
+	if callback_id := class_json.get('callback_id'):
+		binds += f'{bName}.attr("callback_id") = py::int_({callback_id});'
+
+	binds += bName
 	# JIC we need a pointer sometimes on the python side
 	binds += f'\t.def_property_readonly("ptr", []({class_}& self) {{ return reinterpret_cast<uintptr_t>(&self); }})'
 
@@ -257,7 +267,8 @@ def define_enum(enum_json:dict, bindName:str='')->None:
 	enumname = enum_json['enumname']
 	values = ( (d['name'], int(d['value'])) for d in enum_json['values'] )
 
-	strip_name = lambda k: (k[2:] if k.startswith('k_') else k).replace(enumname, '')
+	toStrip = enumname[:-1] if enumname.endswith('Flags') else enumname
+	strip_name = lambda k: (k[2:] if k.startswith('k_') else k).replace(toStrip, '').replace('_','.')
 
 	if bindName:
 		fqname = enum_json.get('fqname') or enumname
