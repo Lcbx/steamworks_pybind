@@ -3,36 +3,72 @@ from json import loads
 from re import compile as regex
 from enum import IntEnum
 from copy import copy
+from itertools import batched as chunks
 
+BUILD_DIR = './build/'
+bindings_main = f'{BUILD_DIR}bindings.cpp'
+all_bind_files = [ bindings_main ]
 
 class BindingsFile:
-	def __init__(self):
-		fpath = Path('bindings.cpp')
-		self.f = open(fpath, 'r+')
-		#print('bindings file open')
 
-	def reset(self)->None:
-		p = 0
-		self.f.seek(p)
-		SEPERATOR = '/* __PROCEDURALY_GENERATED__ */'
-		while line := self.f.readline():
-			if SEPERATOR in line: break
-			p = self.f.tell() + len(SEPERATOR)+1
-		self.f.truncate(p)
-		self.f.seek(p)
+	def __init__(self, max_defs_per_file:int=30):
+		self.max_defs_per_file = max_defs_per_file
+		self.file_count = 0
+		self.current_lines = 0
+		self.impl_file = None
+		#self.newFile()
+
+	def newFile(self, header:str = '')->None:
+		bind_method = f'bind_{self.file_count}'
+		self.file_count += 1
+		self.current_lines = 0
+
+		fPath = f'{BUILD_DIR}{bind_method}.cpp'
+		all_bind_files.append(fPath)
+		self.impl_file = open(Path(fPath), 'w')
+		self.impl_file.write(f'''
+#include "../common.h"
+
+{header}
+
+void {bind_method}(py::module_& m) {{
+''')
 
 	def __iadd__(self, s:str)->'BindingsFile':
-		self.f.write(f' \t{s}\n')
+		self.impl_file.write(f' \t{s}\n')
 		return self
 
+	def endFile(self)->None:
+		self.impl_file.write('\n}') # close function
+		self.impl_file.close()
+
 	def __del__(self)->None:
-		#print('bindings file released')
-		self.__iadd__('\n}') # close module
-		self.f.close()
+		#self.endFile()
+
+		forward = '\n'.join( ( f'void bind_{i}(py::module_& m);' for i in range(self.file_count) ) )
+
+		calls = ''.join( ( f'\tbind_{i}(m);\n' for i in range(self.file_count) ) )
+
+		calls += '\n'.join( (f'\tbind_fixed_array_view<{tp}, {sz}>(m, "{tp}array{sz}");' for tp,sz in sorted(arraybinds) ) )
+
+		with open(Path(bindings_main), 'w') as main: 
+			main.write(f'''
+#include "../additional_implementations.h"
+
+namespace py = pybind11;
+
+{forward}
+
+PYBIND11_MODULE(steamworks, m) {{
+	bind_init(m);
+
+{calls}
+
+	bind_response_adapters(m);
+}}
+''')
 
 binds = BindingsFile()
-binds.reset()
-binds += '\n'
 
 
 api_json = loads(Path('../public/steam/steam_api.json').read_text())
@@ -45,7 +81,7 @@ policies = {
 		'm_int64': 'm_val',
 	},
 
-	'py_type_conversion' : {
+	'type_conversion' : {
 		# SteamNetworkingMessage_t has no destructor, expects you to call release
 		# use this type as a proxy to allow python gc to manage lifetime
 		'SteamNetworkingMessage_t' : 'ReleasePtr<SteamNetworkingMessage_t>',
@@ -57,7 +93,7 @@ policies = {
 	},
 
 	# field types to skip / ignore
-	'py_skip': {
+	'field_types_skipped': {
 		# SteamParamStringArray is only struct with const char **
 		# we have a custom type_caster for it
 		'const char **',
@@ -95,12 +131,35 @@ policies = {
 		#'operator**' : '__pow__',		 # not a C++ operator
 		#'operator**= : '__ipow__',		 # not a C++ operator
 	},
+
+	# unimplemented structs
+	'implementations' : {
+		'SteamDatagramHostedAddress': """
+struct SteamDatagramHostedAddress {
+	int m_cbSize;
+	char m_data[128];
+};
+""",
+		'SteamDatagramGameCoordinatorServerLogin' : """
+struct SteamDatagramGameCoordinatorServerLogin 
+{
+	SteamNetworkingIdentity m_identity;
+	SteamDatagramHostedAddress m_routing;
+	AppId_t m_nAppID;
+	RTime32 m_rtime;
+	int m_cbAppData;
+	char m_appData[2048];
+};
+"""
+
+	}
 }
 method_renames : dict = policies['method_renames']
-field_types_skipped : set = policies['py_skip']
-type_conversions : dict = policies['py_type_conversion']
+field_types_skipped : set = policies['field_types_skipped']
+type_conversions : dict = policies['type_conversion']
 no_constructor : set = policies['no_constructor']
 constructible_interfaces : set = policies['constructible_interfaces']
+implementations : dict = policies['implementations']
 
 # to determine whether to forward declare types
 # ik const, unsigned and * are not actually types but this simplifies things
@@ -174,16 +233,16 @@ def define_methods(class_:str, class_json:dict, use_flat_methods:bool=True):
 		py_params_str = ''.join( (f', py::arg("{k}")' for k in param_names) ) 
 
 		# indices of parameters of types : const T*, T* or T&
-		ptrParamIndices = list(filter(lambda i: (
+		ptrParam_idx = list(filter(lambda i: (
 			(pEnd := (pType := param_types[i])[-1]) == '*' or
 			(not pType.startswith('const') and pEnd == '&')
 		), range(len(param_types))))
-		#print(py_class, mName, param_types, ptrParamIndices)
+		#print(py_class, mName, param_types, ptrParam_idx)
 
-		if len(ptrParamIndices): #(new_return_type := type_conversions.get(return_type)) or len(ptrParamIndices):
+		if ptrParam_idx: #(new_return_type := type_conversions.get(return_type)) or len(ptrParam_idx):
 			conversions = ''
 			new_param_names = copy(param_names)
-			for i in ptrParamIndices:
+			for i in ptrParam_idx:
 				newParamName = f'ptr{i}'
 				old_pType = param_types[i]
 				old_pName = param_names[i]
@@ -282,28 +341,32 @@ all_interface_names = { i['classname'] for i in interfaces_json }
 #print(all_interface_names)
 
 arraybinds = set()
+for chunk in chunks(struct_json,20):
 
-for cls in struct_json:
-	class_ = cls['struct']
-	define_class(class_, cls)
+	unimplemented = [ implementations[cls_name] for cls in chunk if (cls_name := cls['struct']) in implementations ]
+	header = '\n'.join(unimplemented)
+
+	binds.newFile(header)
+	for cls in chunk:
+		class_ = cls['struct']
+		define_class(class_, cls)
+	binds.endFile()
 
 #def find_class_json(name:str):
 #	return [ d for d in classes if d['struct'] == name ][0]
 #define_class('SteamIPAddress_t', find_class_json('SteamIPAddress_t'))
 
-for cls in interfaces_json:
-	class_ = cls['classname']
-	define_class(class_, cls, is_struct=False)
-
-for tp,sz in sorted(arraybinds): # sorted is to have deterministic order
-	binds += f'bind_fixed_array_view<{tp}, {sz}>(m, "{tp}array{sz}");'
-
-binds += 'bind_response_adapters(m);'
+for chunk in chunks(interfaces_json, 20):
+	binds.newFile()
+	for cls in chunk:
+		class_ = cls['classname']
+		define_class(class_, cls, is_struct=False)
+	binds.endFile()
 
 
 # TODO:
-# * split bindings into multiple files (compiler runs out of heap space with all structs/classes)
 # * bind enums
+# * cleanup
 # * test, test, test
 
 def typedef(name:str, declaration:str)->None:
