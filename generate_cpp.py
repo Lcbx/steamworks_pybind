@@ -3,75 +3,9 @@ from json import loads
 from re import compile as regex
 from enum import IntEnum
 from copy import copy
+from binding_file import BindingsFile, joinlines
 from itertools import batched as chunks
 
-BUILD_DIR = './build/'
-bindings_main = f'{BUILD_DIR}bindings.cpp'
-all_bind_files = [ bindings_main ]
-
-class BindingsFile:
-
-	def __init__(self, max_defs_per_file:int=30):
-		self.max_defs_per_file = max_defs_per_file
-		self.file_count = 0
-		self.current_lines = 0
-		self.impl_file = None
-		#self.newFile()
-
-	def newFile(self, header:str = '')->None:
-		bind_method = f'bind_{self.file_count}'
-		self.file_count += 1
-		self.current_lines = 0
-
-		fPath = f'{BUILD_DIR}{bind_method}.cpp'
-		all_bind_files.append(fPath)
-		self.impl_file = open(Path(fPath), 'w')
-		self.impl_file.write(f'''
-#include "../common.h"
-
-{header}
-
-void {bind_method}(py::module_& m) {{
-''')
-
-	def __iadd__(self, s:str)->'BindingsFile':
-		self.impl_file.write(f' \t{s}\n')
-		return self
-
-	def endFile(self)->None:
-		self.impl_file.write('\n}') # close function
-		self.impl_file.close()
-
-	def __del__(self)->None:
-		#self.endFile()
-
-		forward = '\n'.join( ( f'void bind_{i}(py::module_& m);' for i in range(self.file_count) ) )
-
-		calls = ''.join( ( f'\tbind_{i}(m);\n' for i in range(self.file_count) ) )
-
-		calls += '\n'.join( (f'\tbind_fixed_array_view<{tp}, {sz}>(m, "{tp}array{sz}");' for tp,sz in sorted(arraybinds) ) )
-
-		with open(Path(bindings_main), 'w') as main: 
-			main.write(f'''
-#include "../additional_implementations.h"
-
-namespace py = pybind11;
-
-{forward}
-
-PYBIND11_MODULE(steamworks, m) {{
-	bind_init(m);
-
-{calls}
-
-	bind_response_adapters(m);
-}}
-''')
-
-binds = BindingsFile()
-
-
-api_json = loads(Path('../public/steam/steam_api.json').read_text())
 
 policies = {
 	
@@ -133,7 +67,7 @@ policies = {
 	},
 
 	# unimplemented structs
-	'implementations' : {
+	'definitions' : {
 		'SteamDatagramHostedAddress': """
 struct SteamDatagramHostedAddress {
 	int m_cbSize;
@@ -159,28 +93,15 @@ field_types_skipped : set = policies['field_types_skipped']
 type_conversions : dict = policies['type_conversion']
 no_constructor : set = policies['no_constructor']
 constructible_interfaces : set = policies['constructible_interfaces']
-implementations : dict = policies['implementations']
-
-# to determine whether to forward declare types
-# ik const, unsigned and * are not actually types but this simplifies things
-known_types = {'const', 'unsigned', 'signed', '*', '**', 'void', 'char', 'short', 'long', 'int', 'float', 'double' }
-
-# types that have been properly defined
-# for structs, that means full declaration, with struct members
-defined_types = set()
+definitions : dict = policies['definitions']
 
 
 array_regex = regex('(\\w+)\\s*\\[([0-9]+)\\]')
 def parse_type(name, typename:str)->tuple:
 	# functions / callbacks
 	if '(*)' in typename:
-		params = typename.split('(*)')[-1][1:-1].split(',')
-		#print(params)
-
-		# forward declare unknown arguments
-		for param in params:
-			parse_type('', param)
-
+		#params = typename.split('(*)')[-1][1:-1].split(',')
+		##print(params)
 		return '', typename.replace("(*)", f"(*{name})"), ''
 	
 	arr_size = ''
@@ -192,20 +113,8 @@ def parse_type(name, typename:str)->tuple:
 	if '::' in typename:
 		typename = typename.split('::')[-1]
 
-	# forward declare unknown types
-	#for t in typename.strip().split(' '):
-	#	if not t in known_types:
-	#		typedef(t, f'struct {t} {t}')
-
 	return name, typename, arr_size
 
-
-#scalars = {'signed', 'unsigned', 'char', 'short', 'int', 'long', 'float', 'double'}
-#for types_ in api_json['typedefs']:
-#	name = types_['typedef']
-#	actualtype = types_['type']
-#	if all(map(lambda s: s in scalars, actualtype.split(' '))):
-#		scalars.add(name)
 
 def define_methods(class_:str, class_json:dict, use_flat_methods:bool=True):
 	global binds
@@ -279,6 +188,15 @@ def define_class(class_:str,class_json:dict, is_struct:bool=True):
 		# use a unique_ptr with no delete for interfaces
 		else f", std::unique_ptr<{class_}, py::nodelete>" if not is_struct else ""
 		)}> {bName}(m, "{py_class}");'
+
+	if "enums" in class_json:
+		for enum_json in class_json['enums']:
+			define_enum(enum_json, bName)
+
+	if 'consts' in class_json:
+		for const_json in class_json['consts']:
+			define_const(const_json, bName, class_)
+
 	binds += bName
 
 	# JIC we need a pointer sometimes on the python side
@@ -334,100 +252,81 @@ def define_class(class_:str,class_json:dict, is_struct:bool=True):
 	binds += ';'
 
 
-
-struct_json = api_json['callback_structs'] + api_json['structs']
-interfaces_json = api_json['interfaces']
-all_interface_names = { i['classname'] for i in interfaces_json }
-#print(all_interface_names)
-
-arraybinds = set()
-for chunk in chunks(struct_json,20):
-
-	unimplemented = [ implementations[cls_name] for cls in chunk if (cls_name := cls['struct']) in implementations ]
-	header = '\n'.join(unimplemented)
-
-	binds.newFile(header)
-	for cls in chunk:
-		class_ = cls['struct']
-		define_class(class_, cls)
-	binds.endFile()
-
-#def find_class_json(name:str):
-#	return [ d for d in classes if d['struct'] == name ][0]
-#define_class('SteamIPAddress_t', find_class_json('SteamIPAddress_t'))
-
-for chunk in chunks(interfaces_json, 20):
-	binds.newFile()
-	for cls in chunk:
-		class_ = cls['classname']
-		define_class(class_, cls, is_struct=False)
-	binds.endFile()
-
-
-# TODO:
-# * bind enums
-# * cleanup
-# * test, test, test
-
-def typedef(name:str, declaration:str)->None:
-	global known_types
-	known_types.add(name)
-	declaration = f'typedef {declaration};\n'
-
-def extern(name:str, declaration:str)->None:
-	global defined_types
-	defined_types.add(name)
-	declaration = f'extern {declaration};\n'
-
-def add_global(name:str, clss:object)->None:
-	globals()[name] = cls
-
-
-
-## Enums ---------------------------------
-# NOTE: we already create the classes that contain the enums
-
-# NOTE: some interfaces also define enums
-# TODO?: use fqname to add to relevant interface (ex: "fqname": "ISteamHTMLSurface::EHTMLMouseButton")
-
-def define_enum(enum_json:dict, interface:dict|None=None)->None:
-	
-	enumname = enum['enumname']
+def define_enum(enum_json:dict, bindName:str='')->None:
+	global binds
+	enumname = enum_json['enumname']
 	values = ( (d['name'], int(d['value'])) for d in enum_json['values'] )
 
-	# typedef as int and enum values as constants
-	typedef(enumname, f'int {enumname}')
-	for name, value in values:
-		declaration = f'const {enumname} {name} = {value};'
+	strip_name = lambda k: (k[2:] if k.startswith('k_') else k).replace(enumname, '')
 
-	# create a class with the values and names
-	# TODO: check that steam api accepts those
-	cls = IntEnum(
-		enumname,
-		{ name.replace(enumname+'_', ''):value for name, value in values },
-		module=__name__
+	if bindName:
+		fqname = enum_json.get('fqname') or enumname
+		binds += f'py::enum_<{fqname}>({bindName}, "{enumname}")'
+		prefix = fqname + '::' 
+	else:
+		binds += f'py::enum_<{enumname}>(m, "{enumname}")'
+		prefix = ''
+
+	for k,v in values:
+		binds += f'\t.value("{strip_name(k)}", {prefix}{k})'
+	binds += ';'
+
+def define_const(const_json:dict, bindName:str='', class_:str='')->None:
+	global binds
+	bn = bindName or 'm'
+	constname = const_json['constname']
+	consttype = const_json['consttype']
+	constvalue = const_json['constval']
+	# NOTE: ideally we'd check typedefs here
+	conversion = ('float_' if 'float' in consttype
+		else 'int_' if 'int' in consttype or '0' in constvalue or '1' in constvalue or constvalue.isdigit()
+		else 'idk'
 	)
-	#print(cls)
-	
-	# add to globals if not part of interface
-	#defined_types.add(enumname)
-	(interface if interface else globals())[enumname] = cls
+	# NOTE: using values directly since some of these constant are not defined in public headers
+	#if class_: constname = f'{class_}::{constname}'
+	binds += f'{bn}.attr("{constname}") = py::{conversion}({constvalue});'
 
 
-#for enum in api_json['enums']:
-#	define_enum(enum)
+with BindingsFile() as binds:
 
+	api_json = loads(Path('../public/steam/steam_api.json').read_text())
 
-## typedefs ---------------------------------
-# NOTE: requires some forward declarations
+	struct_json = api_json['callback_structs'] + api_json['structs']
+	interfaces_json = api_json['interfaces']
+	all_interface_names = { i['classname'] for i in interfaces_json }
+	#print(all_interface_names)
 
+	binds.newFile()
+	for enum in api_json['enums']:
+		define_enum(enum)
+		binds.endDefinition()
+	for const in api_json['consts']:
+		define_const(const)
+		binds.endDefinition()
+	binds.endFile()
 
-#for td in api_json['typedefs']:
-#	typename = td['typedef']
-#	typename, actualtype, sizebracketed = parse_type(typename, td['type'])
-#	#print(typename, actualtype, sizebracketed)
-#	typedef(typename, f'{actualtype} {typename}{sizebracketed}')
+	arraybinds = set()
+	for chunk in chunks(struct_json,100):
 
+		header = joinlines( ( def_ for cls in chunk if (def_ := definitions.get(cls['struct'])) ) )
 
+		binds.newFile(header)
+		for cls in chunk:
+			class_ = cls['struct']
+			define_class(class_, cls)
+		binds.endFile()
 
-del binds
+	binds.newFile()
+	for cls in interfaces_json:
+		class_ = cls['classname']
+		define_class(class_, cls, is_struct=False)
+		binds.endDefinition()
+	binds.endFile()
+
+	all_bind_files = binds.get_filenames()
+	print(f'generated {len(all_bind_files)} files.')
+
+	array_binds_str = ( f'\tbind_fixed_array_view<{tp}, {sz}>(m, "{tp}array{sz}");' for tp,sz in sorted(arraybinds) )
+	binds.last_calls = joinlines(array_binds_str)
+
+	# binds.__close__() will generate bindings.cpp

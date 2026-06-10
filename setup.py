@@ -13,7 +13,7 @@ distrib_path = Path(f'../redistributable_bin/{platform}')
 if __name__ == '__main__' and (len(sys.argv) == 1 or 'build_ext' in sys.argv):
 	sys.argv = [__name__, 'build_ext', '--build-lib', 'build']
 
-import steamApi
+import generate_cpp
 
 if not (b_dir := Path('build')).exists(): b_dir.mkdir()
 
@@ -22,7 +22,7 @@ destination = Path(f'./build/{lib_name}')
 origin = Path(f'{distrib_path}/{lib_name}')
 if not destination.exists(): copy_file(origin, destination)
 
-#print(steamApi.all_bind_files)
+#print(generate_cpp.all_bind_files)
 
 setup(
 	name='steamworks',
@@ -33,7 +33,7 @@ setup(
 	ext_modules=[
 		Pybind11Extension(
 			'steamworks',
-			steamApi.all_bind_files,
+			generate_cpp.all_bind_files,
 			include_dirs=[
 				'../public',
 			],

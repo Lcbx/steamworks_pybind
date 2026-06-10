@@ -11,11 +11,8 @@
 
 //#include "../public/steam/steam_api.h"
 #include "../public/steam/steam_api_flat.h"
-//#include "../public/steam/steam_gameserver.h" // EServerMode enum
+#include "../public/steam/steam_gameserver.h" // EServerMode enum
 #include "../public/steam/steamnetworkingfakeip.h" // SteamNetworkingFakeIPResult
-//#include "../public/steam/isteamnetworkingutils.h"
-//#include "../public/steam/matchmakingtypes.h"
-//#include "../public/steam/isteammatchmaking.h"
 
 
 namespace py = pybind11;
