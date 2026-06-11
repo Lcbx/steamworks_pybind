@@ -1,19 +1,25 @@
 import ctypes
 import time
-import uuid
 import pytest
+from uuid import uuid4
 
 import build.steamworks as steam
 
-
-# run the test from just running this script
+# run the tests from just running this script
 if __name__ == "__main__":
-	import sys
+	from argparse import ArgumentParser
+	from sys import exit
+
+	parser = ArgumentParser()
+	parser.add_argument('test', nargs='?', help='launch a single test if specified by name')
+	args = parser.parse_args()
+
 	arg = __file__
-	if len(sys.argv) == 2 and (test_name := sys.argv[1]).startswith('test'):
+	if (test_name := args.test) and test_name.startswith('test'):
 		arg += f'::{test_name}'
+
 	code = pytest.main(["-qs", arg])
-	raise SystemExit(code)
+	exit(code)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -246,7 +252,7 @@ def test_lobby_data_roundtrip():
 	lobby_id = create_private_lobby()
 	try:
 		key = "pytest_key"
-		value = "value-{uuid.uuid4()}"
+		value = "value-{uuid4()}"
 
 		ok = matchmaking.SetLobbyData(lobby_id, key, value)
 		assert ok is True
@@ -271,7 +277,7 @@ def test_lobby_member_data_roundtrip():
 		own_id = steam.SteamUser().GetSteamID()
 
 		key = "pytest_member_key"
-		value = f"member-{uuid.uuid4()}"
+		value = f"member-{uuid4()}"
 
 		matchmaking.SetLobbyMemberData(lobby_id, key, value)
 
@@ -337,7 +343,7 @@ def test_find_public_lobby_by_metadata():
 		#assert matchmaking.SetLobbyJoinable(lobby_id, True) is True
 
 		key = "pytest_search_key"
-		value = f"search-{uuid.uuid4()}"
+		value = f"search-{uuid4()}"
 
 		assert matchmaking.SetLobbyData(lobby_id, key, value) is True
 
