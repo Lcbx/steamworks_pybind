@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 from shutil import copy2 as copy_file
 
-from distutils.core import setup
+from setuptools import setup
 from pybind11.setup_helpers import Pybind11Extension
 
 
@@ -13,6 +13,9 @@ distrib_path = Path(f'../redistributable_bin/{platform}')
 if __name__ == '__main__' and (len(sys.argv) == 1 or 'build_ext' in sys.argv):
 	sys.argv = [__name__, 'build_ext', '--build-lib', 'build']
 
+# to be able to import genereate_cpp
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 import generate_cpp
 
 if not (b_dir := Path('build')).exists(): b_dir.mkdir()
@@ -21,8 +24,6 @@ if not (b_dir := Path('build')).exists(): b_dir.mkdir()
 destination = Path(f'./build/{lib_name}')
 origin = Path(f'{distrib_path}/{lib_name}')
 if not destination.exists(): copy_file(origin, destination)
-
-#print(generate_cpp.all_bind_files)
 
 setup(
 	name='steamworks',
@@ -33,7 +34,7 @@ setup(
 	ext_modules=[
 		Pybind11Extension(
 			'steamworks',
-			generate_cpp.all_bind_files,
+			generate_cpp.run(),
 			include_dirs=[
 				'../public',
 			],

@@ -297,47 +297,49 @@ def define_const(const_json:dict, bindName:str='', class_:str='')->None:
 	#if class_: constname = f'{class_}::{constname}'
 	binds += f'{bn}.attr("{constname}") = py::{conversion}({constvalue});'
 
+def run() -> list[str]:
+	global binds, arraybinds, all_interface_names
+	with BindingsFile() as binds:
 
-with BindingsFile() as binds:
+		api_json = loads(Path('../public/steam/steam_api.json').read_text())
 
-	api_json = loads(Path('../public/steam/steam_api.json').read_text())
+		struct_json = api_json['callback_structs'] + api_json['structs']
+		interfaces_json = api_json['interfaces']
+		all_interface_names = { i['classname'] for i in interfaces_json }
+		#print(all_interface_names)
 
-	struct_json = api_json['callback_structs'] + api_json['structs']
-	interfaces_json = api_json['interfaces']
-	all_interface_names = { i['classname'] for i in interfaces_json }
-	#print(all_interface_names)
-
-	binds.newFile()
-	for enum in api_json['enums']:
-		define_enum(enum)
-		binds.endDefinition()
-	for const in api_json['consts']:
-		define_const(const)
-		binds.endDefinition()
-	binds.endFile()
-
-	arraybinds = set()
-	for chunk in chunks(struct_json,100):
-
-		header = joinlines( ( def_ for cls in chunk if (def_ := definitions.get(cls['struct'])) ) )
-
-		binds.newFile(header)
-		for cls in chunk:
-			class_ = cls['struct']
-			define_class(class_, cls)
+		binds.newFile()
+		for enum in api_json['enums']:
+			define_enum(enum)
+			binds.endDefinition()
+		for const in api_json['consts']:
+			define_const(const)
+			binds.endDefinition()
 		binds.endFile()
 
-	binds.newFile()
-	for cls in interfaces_json:
-		class_ = cls['classname']
-		define_class(class_, cls, is_struct=False)
-		binds.endDefinition()
-	binds.endFile()
+		arraybinds = set()
+		for chunk in chunks(struct_json,100):
 
-	all_bind_files = binds.get_filenames()
-	print(f'generated {len(all_bind_files)} files.')
+			header = joinlines( ( def_ for cls in chunk if (def_ := definitions.get(cls['struct'])) ) )
 
-	array_binds_str = ( f'\tbind_fixed_array_view<{tp}, {sz}>(m, "{tp}array{sz}");' for tp,sz in sorted(arraybinds) )
-	binds.last_calls = joinlines(array_binds_str)
+			binds.newFile(header)
+			for cls in chunk:
+				class_ = cls['struct']
+				define_class(class_, cls)
+			binds.endFile()
 
-	# binds.__close__() will generate bindings.cpp
+		binds.newFile()
+		for cls in interfaces_json:
+			class_ = cls['classname']
+			define_class(class_, cls, is_struct=False)
+			binds.endDefinition()
+		binds.endFile()
+
+		array_binds_str = ( f'\tbind_fixed_array_view<{tp}, {sz}>(m, "{tp}array{sz}");' for tp,sz in sorted(arraybinds) )
+		binds.last_calls = joinlines(array_binds_str)
+
+		all_bind_files = binds.get_filenames()
+		print(f'generated {len(all_bind_files)} files.')
+
+		# binds.__close__() will generate bindings.cpp
+		return all_bind_files
