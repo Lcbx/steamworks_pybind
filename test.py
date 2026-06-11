@@ -159,6 +159,10 @@ def test_steam_id_int_conversion_and_equality():
 	assert a == b
 	assert a != c
 
+def test_enum_values():
+	assert steam.ESteamNetConnectionEnd.Invalid == 0
+	assert steam.ESteamNetConnectionEnd.App_Min == 1000
+	assert steam.ESteamNetConnectionEnd.Local_ManyRelayConnectivity == 3002
 
 def test_user_identity():
 	user = steam.SteamUser()

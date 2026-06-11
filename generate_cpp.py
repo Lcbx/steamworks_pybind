@@ -267,20 +267,20 @@ def define_enum(enum_json:dict, bindName:str='')->None:
 	enumname = enum_json['enumname']
 	values = ( (d['name'], int(d['value'])) for d in enum_json['values'] )
 
-	toStrip = enumname[:-1] if enumname.endswith('Flags') else enumname
-	strip_name = lambda k: (k[2:] if k.startswith('k_') else k).replace(toStrip, '').replace('_','.')
+	def formatValueName(name):
+		toStrip = enumname.removesuffix('s') if enumname.endswith('Flags') else enumname
+		# would have preferred to use ESteamNetConnectionEnd.App.Min
+		# but ESteamNetConnectionEnd.App_Min is fine
+		return name.removeprefix('k_').removeprefix(toStrip).removeprefix('_') #.replace('_', '.')
 
-	if bindName:
-		fqname = enum_json.get('fqname') or enumname
-		binds += f'py::enum_<{fqname}>({bindName}, "{enumname}")'
-		prefix = fqname + '::' 
-	else:
-		binds += f'py::enum_<{enumname}>(m, "{enumname}")'
-		prefix = ''
+	fqname = enum_json.get('fqname') or enumname
+	prefix = f'{fqname}::' if bindName else ''
+
+	binds += f'py::native_enum<{fqname}>({bindName or 'm'}, "{enumname}", "enum.IntEnum")'
 
 	for k,v in values:
-		binds += f'\t.value("{strip_name(k)}", {prefix}{k})'
-	binds += ';'
+		binds += f'\t.value("{formatValueName(k)}", {prefix}{k})'
+	binds += '.finalize();'
 
 def define_const(const_json:dict, bindName:str='', class_:str='')->None:
 	global binds

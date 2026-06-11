@@ -6,6 +6,7 @@
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
+#include <pybind11/native_enum.h>
 #include <string>
 #include <algorithm>
 
