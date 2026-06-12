@@ -16,8 +16,7 @@ You need:
 * the Steamworks SDK
 * the Steam client running and logged in for runtime tests
 
-requirements:  
-pybind 3+, pytest 9+, setuptools 64
+see [pyproject.toml](pyproject.toml) for the python libraries used
 
 ## Steamworks SDK layout
 
