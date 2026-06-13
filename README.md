@@ -28,7 +28,7 @@ import steamworks as steam
 
 ## Usage
 
-See [`test.py`](https://github.com/Lcbx/steamworks_pybind/test.py) for current usage examples.
+See [`test.py`](https://github.com/Lcbx/steamworks_pybind/blob/master/test.py) for current usage examples.
 
 The tests cover initialization, Steam user/friend APIs, structs, enums, lobby creation, lobby metadata, callbacks, and call results.
 
@@ -59,7 +59,7 @@ You need:
 * the Steamworks SDK
 * the Steam client running and logged in for runtime tests
 
-see [pyproject.toml](https://github.com/Lcbx/steamworks_pybind/pyproject.toml) for the python libraries used
+see [pyproject.toml](https://github.com/Lcbx/steamworks_pybind/blob/master/pyproject.toml) for the python libraries used
 
 The current build expects this repository to be next to the unpacked Steamworks SDK folders:
 
@@ -115,5 +115,5 @@ py -m cibuildwheel --platform windows --output-dir wheelhouse
 ## License
 
 This project is licensed under the MIT License.
-See [`LICENSE`](https://github.com/Lcbx/steamworks_pybind/LICENSE) for details.
+See [`LICENSE`](https://github.com/Lcbx/steamworks_pybind/blob/master/LICENSE) for details.
 
