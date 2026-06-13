@@ -3,7 +3,11 @@ import time
 import pytest
 from uuid import uuid4
 
-import build.steamworks as steam
+try:
+	import build.steamworks as steam
+except:
+	import steamworks as steam
+
 
 # run the tests from just running this script
 if __name__ == "__main__":
@@ -30,18 +34,16 @@ def steam_api():
 
 
 def pump_callbacks(seconds=0.25):
-	sockets = steam.SteamNetworkingSockets()
 	end = time.time() + seconds
 	while time.time() < end:
-		sockets.RunCallbacks()
+		steam.RunCallbacks()
 		time.sleep(0.01)
 
 
 def wait_until(predicate, timeout=10.0):
-	sockets = steam.SteamNetworkingSockets()
 	end = time.time() + timeout
 	while time.time() < end:
-		sockets.RunCallbacks()
+		steam.RunCallbacks()
 		if value := predicate():
 			return value
 		time.sleep(0.02)
@@ -51,13 +53,12 @@ def wait_until(predicate, timeout=10.0):
 
 def wait_call_result(call, result, timeout=15.0):
 	utils = steam.SteamUtils()
-	sockets = steam.SteamNetworkingSockets()
 	failed = ctypes.c_bool(False)
 	result_type = type(result)
 
 	end = time.time() + timeout
 	while time.time() < end:
-		sockets.RunCallbacks()
+		steam.RunCallbacks()
 
 		ok = utils.GetAPICallResult(
 			hSteamAPICall=call,
@@ -177,6 +178,7 @@ def test_friends_persona_name():
 	friends = steam.SteamFriends()
 
 	name = friends.GetPersonaName()
+	#print(name)
 
 	assert isinstance(name, str)
 	assert name != ""
@@ -365,9 +367,20 @@ def test_find_public_lobby_by_metadata():
 			steam.ELobbyComparison.Equal,
 		)
 
-		result = steam.LobbyMatchList()
 		call = matchmaking.RequestLobbyList()
-		result = wait_call_result(call, result)
+
+		#result = steam.LobbyMatchList()
+		#result = wait_call_result(call, result)
+
+		# alternative implementation using callback adapater
+		result = None
+		def LobbyListCallback(obj):
+			nonlocal result
+			result = obj
+		_ = steam.OnLobbyMatchList(LobbyListCallback)
+		while not result:
+			steam.RunCallbacks()
+			time.sleep(0.1)
 
 		count = result.nLobbiesMatching
 		assert count >= 1
@@ -398,11 +411,11 @@ def test_get_local_user_friend_list_and_names():
 
 	friend_entries = []
 
-	print(f"Found {friend_count} Steam friends:")
+	#print(f"Found {friend_count} Steam friends:")
 	for i in range(friend_count):
 		friend_id = friends.GetFriendByIndex(i, friend_flags)
 		name = friends.GetFriendPersonaName(friend_id)
-		print(f"- {name}: {friend_id}")
+		#print(f"- {name}: {friend_id}")
 		assert friend_id is not None
 		assert isinstance(name, str)
 		assert name != ""

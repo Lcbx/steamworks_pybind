@@ -42,8 +42,9 @@ void {bind_method}(py::module_& m) {{
 			self.endFile()
 			self.newFile()
 
-	def endFile(self)->None:
+	def endFile(self, post_script:str=None)->None:
 		self.impl_file.write('\n}') # close function
+		if post_script: self.impl_file.write(post_script)
 		self.impl_file.close()
 
 	def get_filenames(self)->None:

@@ -4,6 +4,7 @@
 void bind_init(py::module_& m){
 	m.def("init", &SteamAPI_Init);
 	m.def("shutdown", &SteamAPI_Shutdown);
+	m.def("RunCallbacks", &SteamAPI_RunCallbacks);
 
 	py::class_<CSteamID>(m, "SteamID")
 		.def(py::init<uint64>())
@@ -34,86 +35,84 @@ void bind_init(py::module_& m){
 	;
 }
 
-class PyCallbackHolder {
-public:
-	explicit PyCallbackHolder(py::dict callbacks) : callbacks(std::move(callbacks)) {}
-	py::dict callbacks;
-};
 
-class PingResponseAdapter : public ISteamMatchmakingPingResponse, public PyCallbackHolder {
+class PingResponseAdapter : public ISteamMatchmakingPingResponse, public PyMultiCallbackHolder {
 public:
-	using PyCallbackHolder::PyCallbackHolder;
-	
+	using PyMultiCallbackHolder::PyMultiCallbackHolder;
 	void ServerResponded(gameserveritem_t& server) override {
-		callbacks["ServerResponded"](server);
+		callback_dict["ServerResponded"](server);
 	}
 	void ServerFailedToRespond() override {
-		callbacks["ServerFailedToRespond"]();
+		callback_dict["ServerFailedToRespond"]();
 	}
 };
 
-class ServerListResponseAdapter : public ISteamMatchmakingServerListResponse, public PyCallbackHolder {
+class ServerListResponseAdapter : public ISteamMatchmakingServerListResponse, public PyMultiCallbackHolder {
 public:
-	using PyCallbackHolder::PyCallbackHolder;
+	using PyMultiCallbackHolder::PyMultiCallbackHolder;
 	void ServerResponded(HServerListRequest hRequest, int iServer) override {
-		callbacks["ServerResponded"](hRequest, iServer);
+		callback_dict["ServerResponded"](hRequest, iServer);
 	}
 	void ServerFailedToRespond(HServerListRequest hRequest, int iServer) override {
-		callbacks["ServerFailedToRespond"](hRequest, iServer);
+		callback_dict["ServerFailedToRespond"](hRequest, iServer);
 	}
 	void RefreshComplete(HServerListRequest hRequest, EMatchMakingServerResponse response) override {
-		callbacks["RefreshComplete"](hRequest, response);
+		callback_dict["RefreshComplete"](hRequest, response);
 	}
 };
 
 
-class PlayersResponseAdapter : public ISteamMatchmakingPlayersResponse, public PyCallbackHolder {
+class PlayersResponseAdapter : public ISteamMatchmakingPlayersResponse, public PyMultiCallbackHolder {
 public:
-	using PyCallbackHolder::PyCallbackHolder;
+	using PyMultiCallbackHolder::PyMultiCallbackHolder;
 	void AddPlayerToList(const char* pchName, int nScore, float flTimePlayed) override {
-		callbacks["AddPlayerToList"](pchName, nScore, flTimePlayed);
+		callback_dict["AddPlayerToList"](pchName, nScore, flTimePlayed);
 	}
 	void PlayersFailedToRespond() override {
-		callbacks["PlayersFailedToRespond"]();
+		callback_dict["PlayersFailedToRespond"]();
 	}
 	void PlayersRefreshComplete() override {
-		callbacks["PlayersRefreshComplete"]();
+		callback_dict["PlayersRefreshComplete"]();
 	}
 };
 
 
-class RulesResponseAdapter : public ISteamMatchmakingRulesResponse, public PyCallbackHolder {
+class RulesResponseAdapter : public ISteamMatchmakingRulesResponse, public PyMultiCallbackHolder {
 public:
-	using PyCallbackHolder::PyCallbackHolder;
+	using PyMultiCallbackHolder::PyMultiCallbackHolder;
 	void RulesResponded(const char* pchRule, const char* pchValue) override {
-		callbacks["RulesResponded"](pchRule, pchValue);
+		callback_dict["RulesResponded"](pchRule, pchValue);
 	}
 	void RulesFailedToRespond() override {
-		callbacks["RulesFailedToRespond"]();
+		callback_dict["RulesFailedToRespond"]();
 	}
 	void RulesRefreshComplete() override {
-		callbacks["RulesRefreshComplete"]();
+		callback_dict["RulesRefreshComplete"]();
 	}
 };
 
 void bind_response_adapters(py::module_& m){
 	py::class_<PingResponseAdapter, ISteamMatchmakingPingResponse>(m, "SteamMatchmakingPingResponse")
 		.def_property_readonly("ptr", [](PingResponseAdapter& self) { return reinterpret_cast<uintptr_t>(&self); })
-		.def(py::init<py::dict>())
+		.def(py::init<py::dict&>())
+		.def("__setitem__", &PingResponseAdapter::set_item)
 	;
 
 	py::class_<ServerListResponseAdapter, ISteamMatchmakingServerListResponse>(m, "SteamMatchmakingServerListResponse")
 		.def_property_readonly("ptr", [](ServerListResponseAdapter& self) { return reinterpret_cast<uintptr_t>(&self); })
-		.def(py::init<py::dict>())
+		.def(py::init<py::dict&>())
+		.def("__setitem__", &ServerListResponseAdapter::set_item)
 	;
 
 	py::class_<PlayersResponseAdapter, ISteamMatchmakingPlayersResponse>(m, "SteamMatchmakingPlayersResponse")
 		.def_property_readonly("ptr", [](PlayersResponseAdapter& self) { return reinterpret_cast<uintptr_t>(&self); })
-		.def(py::init<py::dict>())
+		.def(py::init<py::dict&>())
+		.def("__setitem__", &PlayersResponseAdapter::set_item)
 	;
 
 	py::class_<RulesResponseAdapter, ISteamMatchmakingRulesResponse>(m, "SteamMatchmakingRulesResponse")
 		.def_property_readonly("ptr", [](RulesResponseAdapter& self) { return reinterpret_cast<uintptr_t>(&self); })
-		.def(py::init<py::dict>())
+		.def(py::init<py::dict&>())
+		.def("__setitem__", &RulesResponseAdapter::set_item)
 	;
 }

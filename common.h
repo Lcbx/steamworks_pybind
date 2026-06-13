@@ -152,4 +152,19 @@ struct ReleaseDeleter {
 template <typename T>
 using ReleasePtr = std::unique_ptr<T, ReleaseDeleter<T>>;
 
+class PyCallbackHolder {
+public:
+	explicit PyCallbackHolder(py::function func) : func(std::move(func)) {}
+	void set_func(py::function func_){ func = std::move(func_); }
+	py::function func;
+};
+
+// usage : callback_dict["ServerResponded"](server);
+class PyMultiCallbackHolder {
+public:
+	explicit PyMultiCallbackHolder(py::dict callback_dict) : callback_dict(std::move(callback_dict)) {}
+	void set_item(py::str key, py::function func){ callback_dict[key] = func; }
+	py::dict callback_dict;
+};
+
 #endif

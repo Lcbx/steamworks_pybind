@@ -179,7 +179,7 @@ def define_class(class_:str,class_json:dict, is_struct:bool=True):
 	global binds
 	class_policy = policies.get(class_) or {}
 
-	py_class = class_[:-2] if class_.endswith('_t') else class_
+	py_class = class_.removesuffix('_t')
 	bName = f'_{class_.lower()}'
 
 	if class_ in constructible_interfaces:
@@ -297,6 +297,28 @@ def define_const(const_json:dict, bindName:str='', class_:str='')->None:
 	#if class_: constname = f'{class_}::{constname}'
 	binds += f'{bn}.attr("{constname}") = py::{conversion}({constvalue});'
 
+def define_response_adapter(class_:str, py_class:str)->None:
+	callbackMethod = f'{py_class}_call'
+	return f'''
+class {py_class} : public PyCallbackHolder {{
+public:
+	using PyCallbackHolder::PyCallbackHolder;
+	STEAM_CALLBACK( {py_class}, {callbackMethod}, {class_} );
+}};
+void {py_class}::{callbackMethod}({class_}* pCallback) {{
+	func(*pCallback);
+}}
+'''
+
+def bind_response_adapter(py_class:str)->None:
+	global binds
+	binds += f'''py::class_<{py_class}>(m, "{py_class}")
+		.def_property_readonly("ptr", []({py_class}& self) {{ return reinterpret_cast<uintptr_t>(&self); }})
+		.def(py::init<py::function&>())
+		.def("__call__", &{py_class}::set_func)
+	;'''
+
+
 def run() -> list[str]:
 	global binds, arraybinds, all_interface_names
 	with BindingsFile() as binds:
@@ -334,6 +356,17 @@ def run() -> list[str]:
 			define_class(class_, cls, is_struct=False)
 			binds.endDefinition()
 		binds.endFile()
+
+		response_headers = ''
+		names = [ (cls['struct'], f'On{cls['struct'].removesuffix('_t')}') for cls in api_json['callback_structs']]
+		for class_, py_class in names:
+			response_headers += define_response_adapter(class_, py_class)
+
+		binds.newFile(response_headers)
+		for _, py_class in names:
+			bind_response_adapter(py_class)
+		binds.endFile()
+
 
 		array_binds_str = ( f'\tbind_fixed_array_view<{tp}, {sz}>(m, "{tp}array{sz}");' for tp,sz in sorted(arraybinds) )
 		binds.last_calls = joinlines(array_binds_str)
