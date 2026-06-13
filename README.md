@@ -6,8 +6,51 @@ The goal is to expose the Steamworks API to Python with mostly generated binding
 
 > **Warning**
 > This project is experimental. The bindings are low-level and may contain unexpected corner cases, incorrect ownership assumptions, crashes, or memory leaks. Use with care.
+## Install
 
-## Requirements
+Install from an existing wheel (see [releases](https://github.com/Lcbx/steamworks_pybind/releases)) :
+
+```bash
+python -m pip install <wheel-file>.whl
+```
+
+Or install the project directly from the repository:
+
+```bash
+python -m pip install .
+```
+
+After installation:
+
+```python
+import steamworks as steam
+```
+
+## Usage
+
+See [`test.py`](https://github.com/Lcbx/steamworks_pybind/test.py) for current usage examples.
+
+The tests cover initialization, Steam user/friend APIs, structs, enums, lobby creation, lobby metadata, callbacks, and call results.
+
+Run all tests:
+
+```bash
+python -m pytest -qs test.py
+```
+
+Or run the test file directly:
+
+```bash
+python test.py
+```
+
+A single test can also be run by name:
+
+```bash
+python test.py test_friends_persona_name
+```
+
+## Build locally
 
 You need:
 
@@ -16,9 +59,7 @@ You need:
 * the Steamworks SDK
 * the Steam client running and logged in for runtime tests
 
-see [pyproject.toml](pyproject.toml) for the python libraries used
-
-## Steamworks SDK layout
+see [pyproject.toml](https://github.com/Lcbx/steamworks_pybind/pyproject.toml) for the python libraries used
 
 The current build expects this repository to be next to the unpacked Steamworks SDK folders:
 
@@ -44,10 +85,7 @@ In particular, the build expects to find :
 ../public
 ../redistributable_bin/<platform>
 ```
-
-## Build locally
-
-From the repository root:
+To build from the repository root:
 
 ```bash
 python setup.py build_ext --build-lib build
@@ -61,66 +99,21 @@ You can then import it locally with:
 import build.steamworks as steam
 ```
 
-## Build wheels
+To build wheels :
 
 ```bash
 py -m cibuildwheel --platform windows --output-dir wheelhouse
-```
-
-## Install
-
-Install from a generated wheel:
-
-```bash
-python -m pip install dist/<wheel-file>.whl
-```
-
-Or install the project directly from the repository:
-
-```bash
-python -m pip install .
-```
-
-After installation:
-
-```python
-import steamworks as steam
-```
-
-## Usage
-
-See [`test.py`](test.py) for current usage examples.
-
-The tests cover initialization, Steam user/friend APIs, structs, enums, lobby creation, lobby metadata, callbacks, and call results.
-
-Run all tests:
-
-```bash
-python -m pytest -qs test.py
-```
-
-Or run the test file directly:
-
-```bash
-python test.py
-```
-
-A single test can also be run by name:
-
-```bash
-python test.py test_friends_persona_name
 ```
 
 ## Notes
 
 * A valid `steam_appid.txt` may be required for local testing.
 * Steam must usually be running and logged in.
-* Some APIs require manual callback pumping.
 * Pointer-heavy APIs are still exposed in a low-level way.
 * Generated bindings may change as the generator evolves.
 
 ## License
 
 This project is licensed under the MIT License.
-See [`LICENSE`](LICENSE) for details.
+See [`LICENSE`](https://github.com/Lcbx/steamworks_pybind/LICENSE) for details.
 
