@@ -27,7 +27,7 @@ if not destination.exists(): copy_file(origin, destination)
 
 setup(
 	name='steamworks',
-	version='0.1',
+	version='0.1.1',
 	author='Lcbx',
 	author_email='https://github.com/Lcbx',
 	description='WIP procedural bindings for steamworks',
