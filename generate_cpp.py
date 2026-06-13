@@ -211,12 +211,12 @@ def define_class(class_:str,class_json:dict, is_struct:bool=True):
 	binds += bName
 	# JIC we need a pointer sometimes on the python side
 	binds += f'\t.def_property_readonly("ptr", []({class_}& self) {{ return reinterpret_cast<uintptr_t>(&self); }})'
-
+	binds += f'\t.def_static("from_ptr", [](uintptr_t ptr) -> {class_}* {{ return reinterpret_cast<{class_}*>(ptr); }}, py::return_value_policy::reference)'
+		
 	if is_struct and not class_ in no_constructor:
 		binds += f'\t.def(py::init<>())'
 
 	define_methods(class_, class_json)
-
 	
 	fields = [ # name, actualtype, sizebracketed
 		parse_type(f['fieldname'], f['fieldtype'])
@@ -314,8 +314,8 @@ void {py_class}::{callbackMethod}({class_}* pCallback) {{
 def bind_response_adapter(py_class:str)->None:
 	global binds
 	binds += f'''py::class_<{py_class}>(m, "{py_class}")
-		.def_property_readonly("ptr", []({py_class}& self) {{ return reinterpret_cast<uintptr_t>(&self); }})
 		.def(py::init<py::function&>())
+		.def_property_readonly("ptr", []({py_class}& self) {{ return reinterpret_cast<uintptr_t>(&self); }})
 		.def("__call__", &{py_class}::set_func)
 	;'''
 

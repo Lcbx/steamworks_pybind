@@ -6,6 +6,9 @@ void bind_init(py::module_& m){
 	m.def("shutdown", &SteamAPI_Shutdown);
 	m.def("RunCallbacks", &SteamAPI_RunCallbacks);
 
+	// for convenience
+	m.def("to_bytes", [](py::capsule ptr, size_t size) { return py::bytes(static_cast<const char*>(ptr.get_pointer()), size); });
+
 	py::class_<CSteamID>(m, "SteamID")
 		.def(py::init<uint64>())
  		.def_property_readonly("ptr", [](CSteamID& self) { return reinterpret_cast<uintptr_t>(&self); })
