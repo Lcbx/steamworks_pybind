@@ -286,6 +286,7 @@ def define_const(const_json:dict, bindName:str='', class_:str='')->None:
 	global binds
 	bn = bindName or 'm'
 	constname = const_json['constname']
+	py_cName = constname.removeprefix('k_')
 	consttype = const_json['consttype']
 	constvalue = const_json['constval']
 	# NOTE: ideally we'd check typedefs here
@@ -295,7 +296,7 @@ def define_const(const_json:dict, bindName:str='', class_:str='')->None:
 	)
 	# NOTE: using values directly since some of these constant are not defined in public headers
 	#if class_: constname = f'{class_}::{constname}'
-	binds += f'{bn}.attr("{constname}") = py::{conversion}({constvalue});'
+	binds += f'{bn}.attr("{py_cName}") = py::{conversion}({constvalue});'
 
 def define_response_adapter(class_:str, py_class:str)->None:
 	callbackMethod = f'{py_class}_call'
