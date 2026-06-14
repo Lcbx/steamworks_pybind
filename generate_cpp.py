@@ -307,9 +307,13 @@ public:
 	STEAM_CALLBACK( {py_class}, {callbackMethod}, {class_} );
 }};
 void {py_class}::{callbackMethod}({class_}* pCallback) {{
-	func(*pCallback);
+	py::gil_scoped_acquire gil;
+	try {{ func(*pCallback);
+	}} catch (const std::exception& e) {{
+		py::print("{callbackMethod} exception:", e.what());
+	}}
 }}
-'''
+''' #func(py::cast(*pCallback, py::return_value_policy::copy));
 
 def bind_response_adapter(py_class:str)->None:
 	global binds
